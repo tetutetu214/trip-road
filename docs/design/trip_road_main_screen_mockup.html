@@ -1,0 +1,107 @@
+<h2 class="sr-only">trip-road のメイン画面モックアップ。iPhone 縦画面に、上部ステータスバー、地図、下部の土地解説カードを配置したダークテーマのデザイン。</h2>
+
+<div style="background: var(--color-background-secondary); padding: 2rem 1rem; border-radius: var(--border-radius-lg); display: flex; justify-content: center;">
+
+  <div style="width: 375px; height: 780px; background: #0f0f10; border-radius: 44px; border: 8px solid #1c1c1e; box-shadow: 0 0 0 2px #000; overflow: hidden; position: relative; font-family: var(--font-sans); color: #f5f5f7;">
+
+    <div style="height: 44px; display: flex; justify-content: space-between; align-items: center; padding: 0 24px; font-size: 15px; font-weight: 500; color: #f5f5f7; background: #0f0f10; position: relative; z-index: 10;">
+      <span>9:41</span>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <svg width="18" height="12" viewBox="0 0 18 12" fill="none"><path d="M1 9 L1 11 M5 7 L5 11 M9 4 L9 11 M13 1 L13 11" stroke="#f5f5f7" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <svg width="26" height="12" viewBox="0 0 26 12" fill="none"><rect x="1" y="2" width="20" height="8" rx="2" stroke="#f5f5f7" stroke-width="1" fill="none"/><rect x="3" y="4" width="16" height="4" rx="1" fill="#f5f5f7"/><rect x="22" y="4" width="2" height="4" rx="0.5" fill="#f5f5f7"/></svg>
+      </div>
+    </div>
+
+    <div style="position: absolute; top: 56px; left: 16px; right: 16px; z-index: 5; display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+
+      <div style="background: rgba(22,22,24,0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 0.5px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 10px 14px; display: flex; align-items: center; gap: 10px;">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="7" stroke="#9fe1cb" stroke-width="1.2" fill="none"/><circle cx="9" cy="9" r="2.5" fill="#9fe1cb"/></svg>
+        <div>
+          <div style="font-size: 10px; letter-spacing: 0.08em; color: #7a7a80; text-transform: uppercase;">いま</div>
+          <div style="font-size: 15px; font-weight: 500; color: #f5f5f7; line-height: 1.2; margin-top: 1px;">神奈川県 相模原市緑区</div>
+        </div>
+      </div>
+
+      <div style="background: rgba(22,22,24,0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 0.5px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 10px 12px; min-width: 62px; text-align: center;">
+        <div style="font-size: 10px; letter-spacing: 0.08em; color: #7a7a80; text-transform: uppercase;">制覇</div>
+        <div style="font-size: 17px; font-weight: 500; color: #f5f5f7; line-height: 1.2; margin-top: 1px;">47<span style="font-size: 11px; color: #7a7a80; margin-left: 2px;">市町村</span></div>
+      </div>
+    </div>
+
+    <div style="position: absolute; top: 44px; left: 0; right: 0; bottom: 320px; background: #18181a; overflow: hidden;">
+
+      <svg width="100%" height="100%" viewBox="0 0 360 420" preserveAspectRatio="xMidYMid slice" style="display: block;">
+        <defs>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#222225" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+        <rect width="360" height="420" fill="#1a1a1c"/>
+        <rect width="360" height="420" fill="url(#grid)"/>
+
+        <path d="M 20 140 Q 80 120 140 150 T 260 170 L 300 190 L 340 220" fill="none" stroke="#2a2a2e" stroke-width="20" stroke-linecap="round"/>
+        <path d="M 40 300 Q 120 280 200 310 T 340 340" fill="none" stroke="#2a2a2e" stroke-width="16" stroke-linecap="round"/>
+        <path d="M 100 50 L 120 180 L 140 280 L 180 380" fill="none" stroke="#2a2a2e" stroke-width="14" stroke-linecap="round"/>
+
+        <path d="M 0 240 Q 60 210 130 230 Q 200 250 270 220 Q 320 200 360 210" fill="none" stroke="#25353a" stroke-width="3" opacity="0.6"/>
+
+        <path d="M 40 360 L 70 340 L 90 320 L 110 300 L 130 285 L 155 270 L 180 255 L 200 240 L 220 230 L 240 220" fill="none" stroke="#5dcaa5" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+        <path d="M 40 360 L 70 340 L 90 320 L 110 300 L 130 285 L 155 270 L 180 255 L 200 240 L 220 230 L 240 220" fill="none" stroke="#5dcaa5" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="0.15"/>
+
+        <circle cx="40" cy="360" r="4" fill="#5dcaa5" opacity="0.7"/>
+        <circle cx="110" cy="300" r="4" fill="#5dcaa5" opacity="0.8"/>
+        <circle cx="180" cy="255" r="4" fill="#5dcaa5" opacity="0.9"/>
+
+        <circle cx="240" cy="220" r="18" fill="#5dcaa5" opacity="0.15"/>
+        <circle cx="240" cy="220" r="11" fill="#5dcaa5" opacity="0.28"/>
+        <circle cx="240" cy="220" r="6" fill="#5dcaa5"/>
+        <circle cx="240" cy="220" r="2.5" fill="#0f0f10"/>
+      </svg>
+
+      <div style="position: absolute; bottom: 12px; right: 12px; background: rgba(22,22,24,0.9); padding: 4px 8px; border-radius: 6px; font-size: 9px; color: #6a6a70; letter-spacing: 0.02em;">出典：地理院タイル</div>
+    </div>
+
+    <div style="position: absolute; bottom: 44px; left: 0; right: 0; background: linear-gradient(180deg, rgba(15,15,16,0) 0%, #0f0f10 14%, #0f0f10 100%); padding: 28px 20px 20px; z-index: 6;">
+
+      <div style="width: 36px; height: 4px; background: #3a3a3e; border-radius: 2px; margin: 0 auto 18px;"></div>
+
+      <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 18px;">
+        <div>
+          <div style="font-size: 11px; letter-spacing: 0.12em; color: #9fe1cb; text-transform: uppercase; margin-bottom: 6px;">SAGAMIHARA · MIDORI</div>
+          <div style="font-size: 24px; font-weight: 500; color: #f5f5f7; line-height: 1.1; letter-spacing: -0.01em;">相模原市 緑区</div>
+        </div>
+        <div style="text-align: right;">
+          <div style="font-size: 10px; letter-spacing: 0.1em; color: #6a6a70; text-transform: uppercase; margin-bottom: 2px;">SPEED</div>
+          <div style="display: flex; align-items: baseline; gap: 4px; justify-content: flex-end;">
+            <span style="font-size: 28px; font-weight: 500; color: #f5f5f7; font-variant-numeric: tabular-nums; line-height: 1;">62</span>
+            <span style="font-size: 12px; color: #7a7a80;">km/h</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="background: rgba(255,255,255,0.03); border: 0.5px solid rgba(255,255,255,0.06); border-radius: 16px; padding: 16px 18px; margin-bottom: 14px;">
+        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 10px;">
+          <div style="width: 14px; height: 1px; background: #9fe1cb;"></div>
+          <span style="font-size: 10px; letter-spacing: 0.14em; color: #9fe1cb; text-transform: uppercase;">土地のたより</span>
+        </div>
+        <p style="font-size: 14px; line-height: 1.75; color: #d8d8dc; margin: 0; font-feature-settings: 'palt';">緑区は津久井湖や相模湖を抱く、山と水の町です。春は桜、夏は鮎釣り、秋には中津川の紅葉が渓谷を染めます。津久井やまゆりラインの沿道では、地場の柚子やこんにゃくが並ぶ直売所が旅人を迎えてくれます。</p>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="4" stroke="#6a6a70" stroke-width="0.8" fill="none"/><path d="M5 3 L5 5.5 L6.5 6.5" stroke="#6a6a70" stroke-width="0.8" stroke-linecap="round"/></svg>
+          <span style="font-size: 10px; color: #6a6a70;">情報は目安です</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 6px; height: 6px; border-radius: 50%; background: #5dcaa5;"></div>
+          <span style="font-size: 10px; color: #9fe1cb; letter-spacing: 0.04em;">GPS 受信中</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="position: absolute; bottom: 0; left: 0; right: 0; height: 44px; display: flex; justify-content: center; align-items: flex-end; padding-bottom: 8px; background: #0f0f10;">
+      <div style="width: 134px; height: 5px; background: #f5f5f7; border-radius: 3px;"></div>
+    </div>
+
+  </div>
+</div>

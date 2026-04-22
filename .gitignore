@@ -1,0 +1,45 @@
+# 秘密情報（絶対にコミットしない）
+.env
+.env.*
+!.env.example
+*.secret
+*.pem
+*.key
+
+# ローカル開発で生成されるファイル
+node_modules/
+.wrangler/
+.cache/
+dist/
+build/
+
+# エディタ・OS
+.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# ログ
+*.log
+logs/
+
+# 前処理の中間ファイル
+preprocess/tmp/
+preprocess/output/
+*.zip
+N03-*_GML/
+N03-*.shp
+N03-*.dbf
+N03-*.shx
+N03-*.prj
+N03-*.geojson
+!public/municipalities/*.geojson
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
