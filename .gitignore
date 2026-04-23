@@ -25,9 +25,9 @@ Thumbs.db
 *.log
 logs/
 
-# 前処理の中間ファイル
+# 前処理の中間ファイル・生成物（Cloudflare Pages に直接デプロイするためリポジトリに含めない）
 preprocess/tmp/
-preprocess/output/
+preprocess/out/
 *.zip
 N03-*_GML/
 N03-*.shp
