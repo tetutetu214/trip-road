@@ -1,0 +1,3 @@
+geopandas==0.14.3
+shapely==2.0.2
+pytest==8.0.0
