@@ -128,15 +128,67 @@
 
 ## 4. ハマリポイント・注意事項
 
-（実装中に追記予定）
+### 4.1 環境系（Phase 0-1 で実際にハマった・学んだこと）
 
-### 4.1 環境系
-- ※ Phase 0 の準備中に追記
+#### npm グローバル install の権限エラー (WSL/Linux)
 
-### 4.2 認証系
+`npm install -g wrangler` が `EACCES: permission denied, mkdir '/usr/lib/node_modules/wrangler'` で失敗する。原因は Node.js が apt/snap でシステム領域にインストールされているため、一般ユーザから `/usr/lib/node_modules/` に書けない。
+
+**解決**: `npm config set prefix '~/.npm-global'` で prefix をユーザ配下に変更し、`~/.bashrc` の PATH に `~/.npm-global/bin` を追加。sudo npm の手間と権限混在を避ける王道。
+
+#### PEP 668 externally-managed-environment
+
+Ubuntu / Debian 系の最近の Python は `pip install --user` もブロックする（PEP 668）。
+
+**解決**: プロジェクト内 venv（`python3 -m venv .venv` → `source .venv/bin/activate`）を作成してそこに依存をインストール。`.gitignore` に `.venv/` 追加（既に登録済）。
+
+#### NumPy 2.x + 古い shapely の ABI 不整合
+
+`shapely==2.0.2` は NumPy 1.x ABI でビルドされており、NumPy 2.4.x 環境で import すると `AttributeError: _ARRAY_API not found` になる。また `geopandas==0.14.3` は `fiona.path` 非対応で `gpd.read_file` が失敗。
+
+**解決**: `requirements.txt` を厳密 pin から範囲 pin に変更。`shapely>=2.0.6,<2.2` / `geopandas>=0.14.4,<2.0` で現代の NumPy 2.x と共存可能に。再現性よりも実用動作を優先する PoC の判断。
+
+#### Bash 長コマンドの paste 事故
+
+長いコマンド（80 文字以上、特に `\` で行継続するもの）をターミナルに paste すると、行継続が壊れたり空白が入り込んで引数分離が崩れる。何度 paste しても再発する。
+
+**解決**: ラッパースクリプト化（`preprocess/run_*.sh`）。スクリプトにしておけば paste 事故が起きない上、再実行可能な資産として残る。`cd "$(dirname "$0")"` + `source .venv/bin/activate` + 本体コマンドのイディオムで、どこから呼んでも動く形に。
+
+### 4.2 データ前処理の実測値（2026-04-23、ローカル WSL 実行）
+
+| 指標 | 実測値 |
+|---|---|
+| N03-20240101 原本 zip | 583.12 MB |
+| N03-20240101.shp 読込後 feature 数 | 約 21 万（全国） |
+| 出力ファイル数（`out/municipalities/`） | 1,905（区単位込み） |
+| 合計サイズ | 32 MB |
+| 最大単ファイル（推定） | 数百 KB（北海道の広域市町村） |
+| `adjacency.json` | 96 KB、1,852 エントリ |
+| 隣接マスタ漏れ（1905 - 1852 = 53） | 離島・飛び地（北山村など） |
+| `split_and_simplify.py` 実行時間 | 約 15〜30 分（WSL、家庭 PC） |
+| `build_adjacency.py` 実行時間 | 約 3〜5 分 |
+| Cloudflare Pages デプロイ | 1,906 ファイル・41 秒（初回） |
+
+#### Cloud Shell は不要だった
+
+Plan A では Google Cloud Shell を推奨していたが、ローカル WSL で十分実行可能。帯域・CPU・メモリとも家庭 PC で問題なし。再クローン不要・既存の venv をそのまま使えるので、ローカル実行の方が効率的だった。「Cloud Shell / CI / ローカル」の選び方は、動く環境がある場所を使うのが一番早い、という教訓。
+
+#### N03 zip の内部構造変動
+
+`download_n03.sh` は「zip 内に `N03-20240101_GML/` というフォルダがある」と想定して書かれていたが、**実際はフラット展開**（tmp/ 直下に `.shp` `.dbf` 等が並ぶ）だった。`ls -la "N03-20240101_GML/"` が `No such file or directory` で失敗。処理本体には影響なし（`split_and_simplify.py` への `--input` パスは `tmp/N03-20240101.shp` で動く）。
+
+**教訓**: 外部配布データの zip 構造は年次で変わりうるので、スクリプトは `find tmp/ -name "*.shp"` のように動的に見つける方が堅牢。Phase 2 以降での改善候補。
+
+### 4.3 Cloudflare Pages の ブランチ/デプロイの仕組み
+
+`wrangler pages deploy` は現在の git ブランチ名を読み取り、production branch 以外の場合は preview deployment として扱う。結果、`<project>.pages.dev`（production URL）ではなく `<branch>-<project>.pages.dev` や `<sha>.<project>.pages.dev` にのみデプロイされる。
+
+**解決**: `--branch=main` を明示してデプロイすると production として扱われ、`<project>.pages.dev` に反映される。`--commit-dirty=true` も付けておくと「未コミットの変更あり」警告を抑制（PoC の一時的な未コミットファイル対策）。
+
+### 4.4 認証系
 - ※ Phase 2 の Workers 実装中に追記
 
-### 4.3 GPS・判定系
+### 4.5 GPS・判定系
 - ※ Phase 3 の実装中に追記
 
 ---
