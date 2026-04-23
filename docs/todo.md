@@ -23,10 +23,10 @@
 
 - [ ] GitHub リポジトリ `tetutetu214/trip-road` 作成（パブリック + Secret Scanning 有効）
 - [ ] 初回コミット & プッシュ（docs / CLAUDE.md / memo.txt）
-- [ ] Cloudflare アカウント動作確認（Pages・Workers 利用可能か）
-- [ ] Anthropic アカウント作成 + $5 クレジット前払い + APIキー発行
-- [ ] 32文字ランダムパスワード生成（`openssl rand -hex 16`）し `~/.secrets/trip-road.env` に保存
-- [ ] Google Cloud Shell 接続確認
+- [x] Cloudflare アカウント動作確認（Pages・Workers 利用可能か）
+- [x] Anthropic アカウント作成 + $5 クレジット前払い + APIキー発行
+- [x] 32文字ランダムパスワード生成（`openssl rand -hex 16`）し `~/.secrets/trip-road.env` に保存
+- [x] Google Cloud Shell 接続確認
 - [ ] `feature/phase0-setup` ブランチで PR 作成
 
 ## Phase 1: データ前処理
