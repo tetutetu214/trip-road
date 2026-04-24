@@ -1,0 +1,15 @@
+name = "trip-road-api"
+main = "src/index.js"
+compatibility_date = "2024-10-01"
+
+# 開発環境のデフォルト値（本番は wrangler secret put で上書き）
+[vars]
+# ここには秘密情報を置かない。Secrets のみを使用する。
+
+# 本番デプロイ時の注意: 以下を wrangler secret put で設定すること
+# - APP_PASSWORD          （32 文字 hex）
+# - ANTHROPIC_API_KEY     （sk-ant-...）
+# - ALLOWED_ORIGIN        （https://trip-road.pages.dev 等、Plan C デプロイ後に確定）
+
+[observability]
+enabled = true
