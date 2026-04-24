@@ -185,8 +185,44 @@ Plan A では Google Cloud Shell を推奨していたが、ローカル WSL で
 
 **解決**: `--branch=main` を明示してデプロイすると production として扱われ、`<project>.pages.dev` に反映される。`--commit-dirty=true` も付けておくと「未コミットの変更あり」警告を抑制（PoC の一時的な未コミットファイル対策）。
 
-### 4.4 認証系
-- ※ Phase 2 の Workers 実装中に追記
+### 4.4 認証系・Workers（Phase 2 で追加）
+
+#### Web Crypto API による定数時間比較
+
+Node の `crypto.timingSafeEqual` は Workers ランタイムに無い。代替として `crypto.subtle.digest('SHA-256', ...)` で両者を固定長 32 バイトに変換してから XOR 比較。ショートサーキットしない for ループで各バイトを `|=` する実装が定石。`auth.js` の `timingSafeEqual` 関数として実装、6 テストで検証。
+
+#### wrangler dev のローカル Secrets: `.dev.vars`
+
+本番は `wrangler secret put` で登録するが、ローカル開発は `.dev.vars` ファイルで環境変数を注入する。`.gitignore` で除外必須。`setup_dev_vars.sh` が `~/.secrets/trip-road.env` から自動生成する仕組みを用意。
+
+#### Anthropic Messages API の直接 fetch
+
+SDK 不使用で `fetch('https://api.anthropic.com/v1/messages')` を直接呼ぶ。ヘッダは `x-api-key`, `anthropic-version: 2023-06-01`, `content-type`。レスポンスは `data.content[0].text` に生成テキスト。Workers のバンドル制限（7.34 KiB → 2.66 KiB gzipped に収まった）を避けられる。
+
+#### Workers サブドメインの仕組み
+
+Cloudflare アカウントに 1 つの `<subdomain>.workers.dev` が割り当てられ、すべての Worker は `<worker-name>.<subdomain>.workers.dev` で公開される。今回のアカウントでは `lemoned-i-scream-art-of-noise` が初回 deploy 時に自動決定（email prefix 由来、ドットはハイフン化）。一度決まったら永続。
+
+- 本番 Worker URL: `https://trip-road-api.lemoned-i-scream-art-of-noise.workers.dev`
+
+#### `wrangler secret put` の transient error と idempotency
+
+Cloudflare API の一瞬の瞬断で `fetch failed` が発生することがある（2 件目の secret 登録で実際に発生）。`wrangler secret put` は同じキー名で何度呼んでも最新値で上書きされるだけなので、**スクリプト再実行で復旧可能**。ネットワーク確認は `curl -v https://api.cloudflare.com/` で HTTP 301 が返れば OK。
+
+#### `printf '%s'` vs `echo -n`
+
+Secret 値を stdin で渡す時、`echo -n` はシェル実装差（sh、dash で挙動が変わる）があるため、`printf '%s'` が POSIX で確実。パスワードに余計な改行が混ざる事故を防ぐ。
+
+#### `workers_dev` と `preview_urls` のデフォルト挙動
+
+wrangler 4.x は `wrangler.toml` に `workers_dev` / `preview_urls` が未指定だとデフォルト有効。警告が出るが PoC では問題なし。本番運用で preview を無効化したい場合は明示する。
+
+#### ラッパースクリプト群（Phase 2）
+
+Plan A 同様、paste 事故回避と再実行可能な資産化のため以下を追加:
+- `workers/setup_dev_vars.sh`: ~/.secrets/ から .dev.vars を安全に生成
+- `workers/test_api_local.sh`: ローカル wrangler dev に対する 4 ケース E2E テスト
+- `workers/deploy_production.sh`: Secrets 登録 + deploy + 本番 E2E テストを 1 本化
 
 ### 4.5 GPS・判定系
 - ※ Phase 3 の実装中に追記

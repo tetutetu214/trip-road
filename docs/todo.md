@@ -44,16 +44,20 @@
 - [x] `out/` を production ブランチとしてデプロイ
 - [x] 本番動作確認（千代田区 HTTP 200、adjacency.json 取得 OK）
 
-## Phase 2: Workers 実装（次の Plan B で実施）
+## Phase 2: Workers 実装（完了）
 
-- [ ] `workers/wrangler.toml` 作成
-- [ ] `workers/src/index.js` 実装（CORS + 認証 + Anthropic プロキシ）
-- [ ] 定数時間比較の実装確認
-- [ ] `wrangler secret put APP_PASSWORD`
-- [ ] `wrangler secret put ANTHROPIC_API_KEY`
-- [ ] `wrangler dev` でローカル動作確認
-- [ ] `wrangler deploy` で本番デプロイ
-- [ ] curl でエンドツーエンド確認（認証成功/失敗、Anthropic 呼出）
+- [x] `workers/wrangler.toml` 作成
+- [x] `workers/src/auth.js`（定数時間比較、TDD 6 テスト）
+- [x] `workers/src/cors.js`（プリフライト + ヘッダ、TDD 3 テスト）
+- [x] `workers/src/anthropic.js`（プロンプト組立 + API 呼出、TDD 11 テスト）
+- [x] `workers/src/index.js` 実装（4 モジュールを glue）
+- [x] 全 20 pytest（vitest）pass 確認
+- [x] `workers/.dev.vars` 生成スクリプト（setup_dev_vars.sh）
+- [x] `wrangler dev` ローカル E2E テスト（test_api_local.sh、4 ケース全 pass）
+- [x] `wrangler secret put APP_PASSWORD / ANTHROPIC_API_KEY / ALLOWED_ORIGIN`
+- [x] `wrangler deploy` で本番デプロイ完了
+- [x] 本番 URL: `https://trip-road-api.lemoned-i-scream-art-of-noise.workers.dev`
+- [x] 本番 curl で認証成功・401・404 動作確認
 
 ## Phase 3: フロントエンド実装（Plan C で実施、段階コミット）
 
