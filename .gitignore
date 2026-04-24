@@ -9,6 +9,12 @@
 # ローカル開発で生成されるファイル
 node_modules/
 .wrangler/
+
+# Cloudflare Workers
+workers/node_modules/
+workers/.wrangler/
+workers/.dev.vars
+
 .cache/
 dist/
 build/
