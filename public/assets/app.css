@@ -1,0 +1,350 @@
+:root {
+  --color-bg: #0f0f10;
+  --color-bg-map: #18181a;
+  --color-bg-card: rgba(22,22,24,0.85);
+  --color-bg-card-inner: rgba(255,255,255,0.03);
+
+  --color-text: #f5f5f7;
+  --color-text-body: #d8d8dc;
+  --color-text-muted: #7a7a80;
+  --color-text-hint: #6a6a70;
+
+  --color-accent: #5dcaa5;
+  --color-accent-light: #9fe1cb;
+  --color-error: #e08080;
+
+  --color-border: rgba(255,255,255,0.08);
+  --color-border-subtle: rgba(255,255,255,0.06);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.hidden { display: none !important; }
+
+.screen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ===== パスワード画面 ===== */
+#password-screen {
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+}
+.password-wrap {
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.password-title {
+  font-size: 14px;
+  letter-spacing: 0.14em;
+  color: var(--color-accent-light);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.password-subtitle {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-bottom: 24px;
+}
+#password-input {
+  width: 260px;
+  height: 44px;
+  padding: 0 16px;
+  background: rgba(255,255,255,0.05);
+  border: 0.5px solid var(--color-border);
+  border-radius: 12px;
+  color: var(--color-text);
+  font-size: 15px;
+  font-family: inherit;
+  outline: none;
+  margin-bottom: 12px;
+}
+#password-input:focus { border-color: var(--color-accent); }
+#password-submit {
+  width: 260px;
+  height: 44px;
+  background: var(--color-accent);
+  color: var(--color-bg);
+  border: none;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: opacity 150ms;
+}
+#password-submit:disabled { opacity: 0.4; pointer-events: none; }
+#password-submit:active { opacity: 0.8; }
+.password-error {
+  font-size: 11px;
+  color: var(--color-error);
+  margin-top: 8px;
+}
+
+/* ===== メイン画面 ===== */
+#main-screen {
+  position: fixed;
+  inset: 0;
+  background: var(--color-bg);
+}
+
+.top-bar {
+  position: absolute;
+  top: env(safe-area-inset-top, 12px);
+  left: 16px;
+  right: 16px;
+  z-index: 5;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  pointer-events: none;
+}
+.chip {
+  background: var(--color-bg-card);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 0.5px solid var(--color-border);
+  border-radius: 14px;
+  padding: 10px 14px;
+  pointer-events: auto;
+}
+.chip-now {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 70%;
+}
+.chip-now .pin { width: 18px; height: 18px; flex-shrink: 0; }
+.chip-count {
+  text-align: center;
+  min-width: 62px;
+  padding: 10px 12px;
+}
+.chip-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  line-height: 1;
+  margin-bottom: 3px;
+}
+.chip-value {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--color-text);
+  line-height: 1.2;
+}
+.chip-count .chip-value { font-size: 17px; }
+.chip-unit {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-left: 2px;
+}
+
+.map {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 320px;
+  background: var(--color-bg-map);
+}
+.map-attribution {
+  position: absolute;
+  bottom: 332px;
+  right: 12px;
+  background: rgba(22,22,24,0.9);
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 9px;
+  color: var(--color-text-hint);
+  z-index: 6;
+}
+
+.bottom-card {
+  position: absolute;
+  bottom: env(safe-area-inset-bottom, 0);
+  left: 0;
+  right: 0;
+  background: linear-gradient(180deg, rgba(15,15,16,0) 0%, var(--color-bg) 14%, var(--color-bg) 100%);
+  padding: 28px 20px 20px;
+  z-index: 6;
+}
+
+.drag-handle {
+  width: 36px;
+  height: 4px;
+  background: #3a3a3e;
+  border-radius: 2px;
+  margin: 0 auto 18px;
+}
+
+.muni-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 18px;
+}
+.muni-romaji {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--color-accent-light);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  min-height: 14px;
+}
+.muni-name-big {
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+.speed-wrap { text-align: right; }
+.speed-label {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--color-text-hint);
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+.speed-value {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  justify-content: flex-end;
+}
+.speed-value > span:first-child {
+  font-size: 28px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.speed-unit {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.tayori-card {
+  background: var(--color-bg-card-inner);
+  border: 0.5px solid var(--color-border-subtle);
+  border-radius: 16px;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+}
+.tayori-label-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.tayori-line {
+  width: 14px;
+  height: 1px;
+  background: var(--color-accent-light);
+}
+.tayori-label {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--color-accent-light);
+  text-transform: uppercase;
+}
+.tayori-body {
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--color-text-body);
+  margin: 0;
+  font-feature-settings: 'palt';
+  min-height: 74px;
+}
+.tayori-body.muted {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-style: italic;
+}
+.tayori-skeleton {
+  min-height: 74px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tayori-skeleton > div {
+  height: 12px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 3px;
+  animation: skeleton 1.5s ease-in-out infinite;
+}
+.tayori-skeleton > div.short { width: 60%; }
+@keyframes skeleton {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+
+.footer-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.disclaimer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--color-text-hint);
+}
+.disclaimer svg { width: 10px; height: 10px; }
+
+.gps-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.dot-active {
+  background: var(--color-accent);
+  box-shadow: 0 0 0 0 rgba(93,202,165,0.6);
+  animation: pulse 2s infinite;
+}
+.dot-inactive { background: var(--color-text-hint); }
+.gps-status { color: var(--color-accent-light); }
+.gps-status.inactive { color: var(--color-text-hint); }
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(93,202,165,0.6); }
+  70% { box-shadow: 0 0 0 8px rgba(93,202,165,0); }
+  100% { box-shadow: 0 0 0 0 rgba(93,202,165,0); }
+}
+
+/* ===== Leaflet 地図のダークテーマ調整 ===== */
+.leaflet-container { background: var(--color-bg-map); }
+.leaflet-control-attribution { display: none !important; }

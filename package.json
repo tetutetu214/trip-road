@@ -1,0 +1,15 @@
+{
+  "name": "trip-road-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "serve": "python3 -m http.server 8000 --directory public",
+    "deploy": "wrangler pages deploy public --project-name=trip-road --branch=main"
+  },
+  "devDependencies": {
+    "vitest": "^1.6.0"
+  }
+}
