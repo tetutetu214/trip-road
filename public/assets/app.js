@@ -18,8 +18,10 @@ import {
   updateTelemetry,
   exportTelemetryAsJson,
   getTelemetryCount,
+  getTelemetryBatch,
+  clearTelemetryBatch,
 } from './storage.js';
-import { fetchDescription } from './api.js';
+import { fetchDescription, sendTelemetryBatch } from './api.js';
 import { identifyMunicipality, prefetchNeighbors } from './muni.js';
 import { initMap, updateCurrentLocation, addTrackPoint, setTrack } from './map.js';
 import { startWatching } from './geo.js';
@@ -42,6 +44,14 @@ let isFirstFix = true;
 const TELEMETRY_SAMPLE_RATE = 1.0;  // 初期 100%、運用で 0.1〜0.2 に下げる
 let currentTraceId = null;
 let currentDisplayStartMs = null;
+
+// === テレメトリ自動 flush 設定（Plan D Stage 2）===
+// localStorage に閾値以上溜まっていれば、定期チェック時に Workers 経由で S3 へバッチ送信。
+// 送信成功した entry は localStorage から削除して再送を防ぐ。
+const TELEMETRY_FLUSH_THRESHOLD = 10;        // この件数以上で送信開始
+const TELEMETRY_FLUSH_INTERVAL_MS = 60000;   // チェック間隔: 60 秒
+const TELEMETRY_FLUSH_BATCH_MAX = 50;        // 1 回の送信で扱う最大件数
+let isFlushing = false;                       // 多重送信防止のロック
 
 // === 初期化 ===
 window.addEventListener('DOMContentLoaded', () => {
@@ -120,6 +130,35 @@ async function enterMainApp(password) {
       const filename = `trip-road-telemetry-${new Date().toISOString().slice(0, 10)}.json`;
       downloadJson(filename, json);
     });
+  }
+
+  // テレメトリ自動 flush: 閾値超えていれば 60 秒ごとに Workers 経由で S3 へ送信
+  setInterval(() => {
+    if (getTelemetryCount() >= TELEMETRY_FLUSH_THRESHOLD) {
+      tryFlushTelemetry(password);
+    }
+  }, TELEMETRY_FLUSH_INTERVAL_MS);
+}
+
+// === テレメトリ自動 flush 本体 ===
+// 多重起動防止 + 表示中 entry は flush 対象から外す（dwell_ms が未確定のため）。
+async function tryFlushTelemetry(password) {
+  if (isFlushing) return;
+  isFlushing = true;
+  try {
+    const batch = getTelemetryBatch(TELEMETRY_FLUSH_BATCH_MAX)
+      .filter(e => e.trace_id !== currentTraceId);
+    if (batch.length === 0) return;
+    const traceIds = batch.map(e => e.trace_id);
+    const result = await sendTelemetryBatch(password, batch);
+    if (result.ok) {
+      clearTelemetryBatch(traceIds);
+      console.log(`[telemetry] flushed ${batch.length} entries → ${result.key}`);
+    } else {
+      console.warn(`[telemetry] flush failed (${result.status}): ${result.error}`);
+    }
+  } finally {
+    isFlushing = false;
   }
 }
 
