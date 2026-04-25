@@ -49,3 +49,10 @@ __pycache__/
 *$py.class
 venv/
 .venv/
+
+# Playwright E2E（生成物のみ除外、テストコード本体は commit）
+tests/e2e/results/
+tests/e2e/report/
+test-results/
+playwright-report/
+.playwright-cache/

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0f0f10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="trip-road">
+<link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png">
+<link rel="manifest" href="/manifest.json">
+<title>trip-road</title>
+
+<!-- Leaflet CSS (CDN) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""/>
+
+<link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+
+<!-- パスワード入力画面 -->
+<section id="password-screen" class="screen">
+  <div class="password-wrap">
+    <div class="password-title">trip-road</div>
+    <div class="password-subtitle">旅のお供、始めます</div>
+    <input type="password" id="password-input" placeholder="合言葉" autocomplete="off" spellcheck="false">
+    <button type="button" id="password-submit" disabled>はじめる</button>
+    <div id="password-error" class="password-error hidden"></div>
+  </div>
+</section>
+
+<!-- メイン画面 -->
+<section id="main-screen" class="screen hidden">
+  <!-- 上部フロートチップ -->
+  <div class="top-bar">
+    <div class="chip chip-now">
+      <svg class="pin" viewBox="0 0 18 18"><circle cx="9" cy="9" r="7" stroke="#9fe1cb" stroke-width="1.2" fill="none"/><circle cx="9" cy="9" r="2.5" fill="#9fe1cb"/></svg>
+      <div>
+        <div class="chip-label">いま</div>
+        <div class="chip-value" id="muni-name">現在地を取得中...</div>
+      </div>
+    </div>
+    <div class="chip chip-count">
+      <div class="chip-label">制覇</div>
+      <div class="chip-value"><span id="visited-count">0</span><span class="chip-unit">市町村</span></div>
+    </div>
+  </div>
+
+  <!-- 地図エリア -->
+  <div id="map" class="map"></div>
+  <div class="map-attribution">出典：地理院タイル</div>
+
+  <!-- 下部カード -->
+  <div class="bottom-card">
+    <div class="drag-handle"></div>
+    <div class="muni-row">
+      <div>
+        <div class="muni-romaji" id="muni-romaji"></div>
+        <div class="muni-name-big" id="muni-name-big">—</div>
+      </div>
+      <div class="speed-wrap">
+        <div class="speed-label">SPEED</div>
+        <div class="speed-value"><span id="speed">--</span><span class="speed-unit">km/h</span></div>
+      </div>
+    </div>
+
+    <!-- 土地のたよりカード -->
+    <div class="tayori-card">
+      <div class="tayori-label-row">
+        <div class="tayori-line"></div>
+        <span class="tayori-label">土地のたより</span>
+      </div>
+      <div id="description" class="tayori-body"></div>
+      <div id="description-skeleton" class="tayori-skeleton hidden">
+        <div></div><div></div><div class="short"></div>
+      </div>
+    </div>
+
+    <!-- フッター -->
+    <div class="footer-row">
+      <div class="disclaimer">
+        <svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" stroke="#6a6a70" stroke-width="0.8" fill="none"/><path d="M5 3 L5 5.5 L6.5 6.5" stroke="#6a6a70" stroke-width="0.8" stroke-linecap="round"/></svg>
+        情報は目安です
+      </div>
+      <div class="gps-status" id="gps-status">
+        <span class="dot dot-inactive" id="gps-dot"></span>
+        <span id="gps-text">GPS 測位中</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Leaflet JS (CDN) -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
+
+<!-- Turf.js booleanPointInPolygon (CDN) -->
+<script src="https://unpkg.com/@turf/turf@7.0.0/turf.min.js"></script>
+
+<!-- App entry point -->
+<script type="module" src="/assets/app.js"></script>
+</body>
+</html>

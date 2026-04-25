@@ -59,26 +59,29 @@
 - [x] 本番 URL: `https://trip-road-api.lemoned-i-scream-art-of-noise.workers.dev`
 - [x] 本番 curl で認証成功・401・404 動作確認
 
-## Phase 3: フロントエンド実装（Plan C で実施、段階コミット）
+## Phase 3: フロントエンド実装（完了）
 
-- [ ] 3-1: HTML骨格 + PWA メタタグ + ダークテーマCSS
-- [ ] 3-2: Leaflet 地図表示（地理院タイル）
-- [ ] 3-3: GPS取得 + 速度表示（speed-mater コード流用）
-- [ ] 3-4: P-in-P判定 + adjacency プリフェッチ + GSI フォールバック
-- [ ] 3-5: LLM 呼び出し + `{code}_{season}` キャッシュ + 3回指数バックオフ
-- [ ] 3-6: 軌跡ポリライン + 制覇カウント + localStorage 永続化
-- [ ] 3-7: パスワード入力UI + エラー表示 + 免責表示 + 追従ON/OFFボタン
+- [x] PWA メタタグ + ダークテーマCSS（モックアップ準拠）
+- [x] Leaflet 地図表示（地理院タイル）
+- [x] GPS取得 + 速度表示（geo.js）
+- [x] P-in-P判定 + adjacency プリフェッチ + GSI フォールバック（muni.js）
+- [x] LLM 呼び出し + `{code}_{season}` キャッシュ + 3回指数バックオフ（api.js + storage.js）
+- [x] 軌跡ポリライン + 制覇カウント + localStorage 永続化
+- [x] パスワード入力UI + エラー表示 + 免責表示
+- [x] 純粋関数 3 モジュール（season/cache/storage）を vitest で 10 テスト pass
+- [x] バグ修正: 最小化→復帰時の地図サイズ崩れ（visibilitychange + invalidateSize）
 
-## Phase 4: デプロイ＆実機確認（Plan C 末尾で実施）
+## Phase 4: デプロイ＆実機確認（完了）
 
-- [ ] 仮アイコン（180x180 PNG「TR」）作成・配置
-- [ ] manifest.json 作成
-- [ ] Cloudflare Pages `trip-road` プロジェクトにフロントデプロイ
-- [ ] iPhone Safari で「ホーム画面に追加」確認
-- [ ] スタンドアロンモード起動確認
-- [ ] 近所散歩で実走テスト
-- [ ] LLM解説品質の実使用確認
-- [ ] 必要に応じ tolerance / プロンプト / UI 調整
+- [x] 仮アイコン（180x180 PNG「TR」）作成・配置
+- [x] manifest.json 作成
+- [x] Cloudflare Pages `trip-road` プロジェクトにフロントデプロイ
+- [x] 独自ドメイン `trip-road.tetutetu214.com` 紐付け
+- [x] iPhone Safari で「ホーム画面に追加」確認（実機）
+- [x] スタンドアロンモード起動確認（実機）
+- [x] 実走テスト（実機、市町村切替・LLM 解説生成・軌跡描画すべて確認）
+- [x] LLM解説品質の実使用確認（プロンプト設計通りに具体的地名 + 季節感、日付なし）
+- [x] Playwright E2E 4 テスト pass（Chromium iPhone エミュレーション、本番ドメイン対象）
 
 ---
 

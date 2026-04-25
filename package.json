@@ -1,0 +1,18 @@
+{
+  "name": "trip-road-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "serve": "python3 -m http.server 8000 --directory public",
+    "deploy": "wrangler pages deploy public --project-name=trip-road --branch=main"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "vitest": "^1.6.0"
+  }
+}
