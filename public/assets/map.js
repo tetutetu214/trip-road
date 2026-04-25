@@ -34,6 +34,23 @@ export function initMap(containerId) {
     lineJoin: 'round',
   }).addTo(map);
 
+  // 最小化→復帰や画面回転・リサイズ時に地図サイズを再計算する。
+  // iOS Safari でバックグラウンド復帰時に viewport が一時的にずれて、
+  // .map のレイアウトが崩れて上部チップが地図に隠れる現象への対策。
+  const refreshSize = () => {
+    if (!map) return;
+    // CSS の再計算が完了してから invalidateSize を呼ぶため少し遅延
+    setTimeout(() => map.invalidateSize(), 100);
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshSize();
+  });
+  window.addEventListener('pageshow', refreshSize);
+  window.addEventListener('resize', () => {
+    if (map) map.invalidateSize();
+  });
+  window.addEventListener('orientationchange', refreshSize);
+
   return map;
 }
 
