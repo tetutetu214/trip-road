@@ -319,6 +319,16 @@ body {
 }
 .disclaimer svg { width: 10px; height: 10px; }
 
+.export-link {
+  font-size: 14px;
+  text-decoration: none;
+  color: var(--color-text-hint);
+  margin-left: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.export-link:active { opacity: 0.6; }
+
 .gps-status {
   display: flex;
   align-items: center;

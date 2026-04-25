@@ -16,6 +16,8 @@ import {
   getVisitedCount,
   appendTelemetry,
   updateTelemetry,
+  exportTelemetryAsJson,
+  getTelemetryCount,
 } from './storage.js';
 import { fetchDescription } from './api.js';
 import { identifyMunicipality, prefetchNeighbors } from './muni.js';
@@ -28,6 +30,7 @@ import {
   setMuniName, setMuniRomaji, setSpeed, setVisitedCount,
   setDescription, setDescriptionLoading, setDescriptionFailed, clearDescription,
   setGpsActive, setPermissionDenied,
+  downloadJson,
 } from './ui.js';
 
 let currentMuniCd = null;
@@ -101,6 +104,23 @@ async function enterMainApp(password) {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) finalizeCurrentTelemetry();
   });
+
+  // テレメトリ手動エクスポート（フッター 📤 アイコン）
+  const exportLink = document.getElementById('export-link');
+  if (exportLink) {
+    exportLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      finalizeCurrentTelemetry();  // 表示中 entry も含めて確定してから書出
+      const count = getTelemetryCount();
+      if (count === 0) {
+        alert('テレメトリはまだ蓄積されていません');
+        return;
+      }
+      const json = exportTelemetryAsJson();
+      const filename = `trip-road-telemetry-${new Date().toISOString().slice(0, 10)}.json`;
+      downloadJson(filename, json);
+    });
+  }
 }
 
 // === GPS 位置更新時の処理 ===

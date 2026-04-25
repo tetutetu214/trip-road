@@ -86,3 +86,16 @@ export function setPermissionDenied() {
   body.textContent = 'iPhone の設定 → trip-road → 位置情報 を「App の使用中のみ」に設定してください';
   $('description-skeleton').classList.add('hidden');
 }
+
+// Plan D Stage 1: テレメトリ JSON のダウンロード（手動エクスポート）
+export function downloadJson(filename, jsonString) {
+  const blob = new Blob([jsonString], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
