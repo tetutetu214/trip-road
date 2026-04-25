@@ -84,3 +84,45 @@ export function appendTrack(lat, lon) {
   state.track.push({ lat, lon, ts: Date.now() });
   saveState(state);
 }
+
+// === Telemetry ===
+// Plan D Stage 1: 暗黙シグナル（dwell_ms 等）を localStorage に蓄積し、
+// Stage 2 で Workers /api/telemetry に flush する。
+export function appendTelemetry(entry) {
+  const state = loadState();
+  state.telemetry ??= [];
+  state.telemetry.push(entry);
+  saveState(state);
+}
+
+export function updateTelemetry(traceId, partial) {
+  const state = loadState();
+  state.telemetry ??= [];
+  const idx = state.telemetry.findIndex(e => e.trace_id === traceId);
+  if (idx >= 0) {
+    state.telemetry[idx] = { ...state.telemetry[idx], ...partial };
+    saveState(state);
+  }
+}
+
+export function getTelemetryBatch(maxN) {
+  const t = loadState().telemetry ?? [];
+  return t.slice(0, maxN);
+}
+
+export function getTelemetryCount() {
+  return (loadState().telemetry ?? []).length;
+}
+
+export function clearTelemetryBatch(traceIds) {
+  const state = loadState();
+  state.telemetry ??= [];
+  const toRemove = new Set(traceIds);
+  state.telemetry = state.telemetry.filter(e => !toRemove.has(e.trace_id));
+  saveState(state);
+}
+
+export function exportTelemetryAsJson() {
+  const t = loadState().telemetry ?? [];
+  return JSON.stringify(t, null, 2);
+}
