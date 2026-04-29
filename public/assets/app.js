@@ -3,7 +3,7 @@
  * DOMContentLoaded で初期化、状態遷移を管理。
  */
 
-import { getSeason } from './season.js';
+import { getSolarTerm } from './season.js';
 import {
   loadState,
   savePassword,
@@ -100,7 +100,7 @@ async function enterMainApp(password) {
   if (currentMuniCd && state.visited[currentMuniCd]) {
     const v = state.visited[currentMuniCd];
     setMuniName(v.name);
-    const cached = getCachedDescription(currentMuniCd, getSeason());
+    const cached = getCachedDescription(currentMuniCd, getSolarTerm());
     if (cached) setDescription(cached);
   }
 
@@ -192,8 +192,8 @@ async function handlePosition({ lat, lon, speed }, password) {
     prefetchNeighbors(muni.code);
 
     // LLM 呼出 or キャッシュ
-    const season = getSeason();
-    const cached = getCachedDescription(muni.code, season);
+    const solarTerm = getSolarTerm();
+    const cached = getCachedDescription(muni.code, solarTerm);
 
     // 直前 entry の離脱情報を確定（市町村が切り替わるタイミング）
     finalizeCurrentTelemetry();
@@ -214,7 +214,7 @@ async function handlePosition({ lat, lon, speed }, password) {
         appendTelemetry(buildTelemetryEntry({
           trace_id: currentTraceId,
           muni_code: muni.code,
-          season,
+          solar_term: solarTerm,
           description: cached,
           ts_generated: Date.now(),
         }));
@@ -226,17 +226,17 @@ async function handlePosition({ lat, lon, speed }, password) {
       const result = await fetchDescription(password, {
         prefecture: muni.prefecture,
         municipality: muni.name,
-        season,
+        solar_term: solarTerm,
       });
       if (result.ok) {
-        setCachedDescription(muni.code, season, result.description);
+        setCachedDescription(muni.code, solarTerm, result.description);
         setDescription(result.description);
         // 新規生成を記録
         if (currentTraceId) {
           appendTelemetry(buildTelemetryEntry({
             trace_id: currentTraceId,
             muni_code: muni.code,
-            season,
+            solar_term: solarTerm,
             description: result.description,
             ts_generated: Date.now(),
           }));

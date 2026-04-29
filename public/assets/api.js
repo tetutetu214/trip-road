@@ -11,7 +11,8 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
  * 土地のたよりを取得する。
  *
  * @param {string} password - X-App-Password に送る値
- * @param {{prefecture: string, municipality: string, season: string}} req
+ * @param {{prefecture: string, municipality: string, solar_term: string}} req
+ *   solar_term は二十四節気の番号文字列（'01'〜'24'）
  * @returns {Promise<{ok: true, description: string} | {ok: false, status: number, error: string}>}
  */
 export async function fetchDescription(password, req) {

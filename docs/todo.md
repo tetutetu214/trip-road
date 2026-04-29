@@ -1,6 +1,6 @@
 # trip-road タスク一覧
 
-**最終更新**: 2026-04-27
+**最終更新**: 2026-04-29
 
 ---
 
@@ -117,6 +117,16 @@
 
 - [x] `docs/todo.md` / `docs/knowledge.md` 4.7 セクション更新
 - [ ] `feature/telemetry-aws` → main の PR 作成・マージ
+
+### LLM プロンプトを二十四節気・地名・歴史・地形対応に刷新（2026-04-29）
+
+- [x] `season.js` を `getSolarTerm()` に書き換え（節気番号 '01'〜'24' を返す）
+- [x] `cache.js` / `storage.js` のキャッシュ層を可変キー構造に変更
+- [x] `app.js` / `api.js` / `telemetry.js` のフィールド名を `season` → `solar_term` に
+- [x] `workers/src/anthropic.js` のプロンプトとバリデーションを刷新（節気名+番号で渡し、地名・歴史・地形を確信ある範囲で書かせる）
+- [x] フロント・Worker 両方のテスト更新（全パス）
+- [x] `docs/spec.md` の API 仕様・プロンプト仕様・データ仕様を更新
+- [x] `docs/knowledge.md` 4.X セクションに移行の決定事項を記録
 
 ---
 
