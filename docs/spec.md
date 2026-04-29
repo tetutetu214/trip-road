@@ -628,8 +628,368 @@ curl -X POST http://localhost:8787/api/describe \
 
 ---
 
-## 10. 次のステップ
+## 10. Phase 6 (Plan E) 詳細仕様: LLM as a judge
 
-1. この spec.md を実装の原典として合意（ユーザレビュー）
-2. writing-plans スキルを起動し、Phase 0 〜 4 の詳細タスクを step-by-step で作成
-3. Phase 0（準備: Anthropic アカウント・API キー・パスワード生成）から着手
+> 設計判断の背景・トレードオフは `docs/plan.md` 第 10 章、`docs/knowledge.md` 4.7 章を参照。本章は実装に必要な仕様のみを記す。
+
+### 10.1 全体フロー
+
+```
+[フロント]                    [Workers /api/describe]              [外部]
+   │                                  │
+   │── POST /api/describe ────────────▶
+   │                                  │── 生成 ──────────────────▶ Anthropic Haiku
+   │                                  │◀──────── description ────
+   │                                  │
+   │                                  │── Wikipedia 取得（軸1用）─▶ Wikipedia API
+   │                                  │◀──────── extract ─────────
+   │                                  │   （Workers Cache API、TTL 30日）
+   │                                  │
+   │                                  │── Judge 4軸並列 ──────────▶ Anthropic Sonnet 4.6
+   │                                  │◀──────── 4 scores ────────
+   │                                  │
+   │                                  │   if 全軸4点以上 + 文字数OK
+   │                                  │   → 合格 / キャッシュへ
+   │                                  │   else 1回だけ再生成
+   │                                  │   → 再評価 → 結果に関わらず打ち切り
+   │                                  │
+   │◀─ JSON (description + judge_*) ──│
+   │                                  │
+   │ 経過時間で段階表示                 │
+```
+
+### 10.2 Wikipedia API クライアント仕様
+
+#### エンドポイント
+
+```
+GET https://ja.wikipedia.org/w/api.php
+  ?action=query
+  &prop=extracts
+  &exintro=true
+  &explaintext=true
+  &redirects=true
+  &titles=<URL_ENCODED_TITLE>
+  &format=json
+  &formatversion=2
+```
+
+- `prop=extracts`: 記事本文の抜粋
+- `exintro=true`: イントロ（最初のセクション）のみ
+- `explaintext=true`: HTML タグ除去、プレーンテキスト
+- `redirects=true`: リダイレクトを自動追跡
+- `formatversion=2`: 新しいレスポンス形式（pages が配列）
+
+#### リクエストヘッダ
+
+```
+User-Agent: trip-road/1.0 (https://github.com/tetutetu214/trip-road; tetutetu214@github)
+Accept: application/json
+```
+
+Wikipedia の Etiquette として User-Agent 必須。
+
+#### レスポンス例（相模原市緑区）
+
+```json
+{
+  "query": {
+    "pages": [{
+      "pageid": 1234567,
+      "ns": 0,
+      "title": "緑区 (相模原市)",
+      "extract": "緑区（みどりく）は、神奈川県相模原市にある区。..."
+    }]
+  }
+}
+```
+
+#### titles の決定ルール
+
+`muni_code` から市町村名を求めて Wikipedia title に変換する。
+
+- 通常市町村: `municipality` をそのまま title に使う（例: "相模原市"）
+- 政令指定都市の区: `municipality` をそのまま使い、`redirects=true` で自動解決（例: "緑区" → "緑区 (相模原市)"）
+- 同名曖昧さ回避: `redirects=true` で大半は自動解決。失敗時は `prefecture` を含めた title で再試行
+
+#### キャッシュ仕様
+
+- ストア: Workers Cache API（`caches.default`）
+- キー: ダミー URL `https://wikipedia-cache.internal/<muni_code>` の Request オブジェクト
+- TTL: 30 日（`Cache-Control: public, max-age=2592000`）
+- ヒット: cached extract を返す
+- ミス: Wikipedia API を叩く → 結果を put → 返す
+- Wikipedia API 失敗時 / extract が空: `null` を返す（呼び出し側でフォールバック）
+
+#### 抜粋の前処理
+
+- extract は最大 1500 字程度に切り詰める（Sonnet コンテキスト節約）
+- 改行を維持、参考文献記号 `[1]` 等の残骸があれば正規表現で除去
+
+### 10.3 Judge プロンプト仕様
+
+#### 共通プリアンブル（4 軸全プロンプトの先頭）
+
+```
+あなたは厳格な校閲者です。以下の旅行解説（120〜180字、iPhoneで移動中の旅人が読む）を採点します。
+誤りや弱点を見逃すと、読者にとって価値の低い解説がキャッシュされ続けてしまいます。
+
+【市町村】 {prefecture} {municipality}
+【二十四節気】 {solar_term_number} {solar_term_name}（{solar_term_period}）
+【解説本文】
+{description}
+
+【手順】
+1. 以下の観点について、解説本文から **減点根拠となる該当箇所を引用形式で列挙** せよ。
+2. 引用した減点根拠の重みを踏まえ、**最後に** 1〜5 点で採点せよ。
+3. 必ず以下の JSON 形式のみで出力せよ（前後に説明文を付けない）:
+   {"deductions": ["引用1", "引用2", ...], "score": <整数 1-5>, "notes": "<簡潔なまとめ 50字以内>"}
+
+【採点基準（共通）】
+- 5: 減点根拠なし、模範的
+- 4: 軽微な減点根拠あり（許容範囲）
+- 3: 中程度の減点根拠複数（再生成すべき）
+- 2: 重大な減点根拠あり
+- 1: 全面的に問題
+```
+
+#### 軸 1: 事実正確性 prompt（差分）
+
+```
+【観点】 地理・歴史・地形に関する記述が、以下の Wikipedia 抜粋と照合して事実誤認や根拠なき記述になっていないか。
+（Wikipedia に明記されていない事項は「根拠なし」とみなし減点。Wikipedia と直接矛盾する記述はより重く減点。）
+
+【Wikipedia 抜粋】
+{wikipedia_extract}
+
+【Few-shot 例】
+
+例A（5点想定）:
+解説:「緑区は津久井湖と相模湖を抱える山岳地帯。標高1,673mの蛭ヶ岳（神奈川県最高峰）が区西部にそびえ、江戸期は甲州街道の宿場町として賑わった。」
+→ 出力: {"deductions": [], "score": 5, "notes": "Wikipediaと整合"}
+
+例B（2点想定）:
+解説:「相模原市緑区は江戸時代の城下町として栄え、武家屋敷の街並みが今も残る。」
+→ 出力: {"deductions": ["江戸時代の城下町として栄え（Wikipediaに記載なし、緑区は城下町ではない）", "武家屋敷の街並み（同上、根拠なし）"], "score": 2, "notes": "城下町という根拠不明な前提が複数文にわたる"}
+
+ではこの解説本文を採点してください。
+```
+
+#### 軸 2: 具体性 prompt（差分）
+
+```
+【観点】 単語レベルで、固有名詞（地名・施設名・特産品・人物・年号・標高・距離等の具体値）がどれだけ含まれているか。「春野菜」「桜が美しい」「のんびりとした時間」のように他市町村でも通用する抽象・汎用フレーズが多いほど低スコア。
+
+【Few-shot 例】
+
+例A（5点想定）:
+解説:「緑区には津久井湖・相模湖・城山ダム・蛭ヶ岳（標高1,673m）・津久井城址がある。江戸期は甲州街道の小原宿・与瀬宿が置かれ、養蚕業で栄えた。」
+→ 出力: {"deductions": [], "score": 5, "notes": "固有名詞が高密度"}
+
+例B（2点想定）:
+解説:「緑区は山と湖が美しい町です。春には桜が咲き、自然豊かな景観が広がります。歴史も古く、地元の名物も楽しめる素敵な地域です。」
+→ 出力: {"deductions": ["山と湖が美しい（汎用）", "桜が咲き（汎用）", "自然豊かな景観（汎用）", "歴史も古く（汎用）", "地元の名物（具体名なし）"], "score": 2, "notes": "固有名詞ゼロ、全文が汎用フレーズ"}
+
+ではこの解説本文を採点してください。
+```
+
+#### 軸 3: 季節整合 prompt（差分）
+
+```
+【観点】 二十四節気（{solar_term_name}: {solar_term_period}）と矛盾する季節描写が含まれていないか。例えば「清明（4月初旬）」の時期に紅葉や雪景色を書いていれば矛盾。
+
+【Few-shot 例】
+
+例A（5点想定、節気=清明）:
+解説:「清明の頃、緑区の津久井湖周辺ではヤマザクラが見頃。城山公園の桜並木、相模湖の遊覧船運航再開時期。」
+→ 出力: {"deductions": [], "score": 5, "notes": "4月初旬と整合"}
+
+例B（1点想定、節気=清明）:
+解説:「緑区の山々は雪化粧で美しく、紅葉も色づき始めました。冬の静けさが残る湖畔は…」
+→ 出力: {"deductions": ["雪化粧（清明=4月初旬と矛盾）", "紅葉も色づき始め（同）", "冬の静けさ（同）"], "score": 1, "notes": "節気と完全に矛盾"}
+
+ではこの解説本文を採点してください。
+```
+
+#### 軸 4: 情報密度 prompt（差分）
+
+```
+【観点】 文章全体として、旅人にとって有用な情報（地名・歴史・地形・特産・ランドマーク・実用情報）が淡々と詰まっているか。情緒的修飾（「淡紅色に染まり」「心地よい春風が頬をなで」「のんびりとした時間が流れる」「優雅な〜」「美しい〜」「素敵な〜」など）に字数を取られていると低スコア。事実陳述・カーナビ的な情報案内に近いほど高スコア。
+
+【Few-shot 例】
+
+例A（5点想定）:
+解説:「緑区の津久井湖は1965年完成の城山ダム湖、湛水面積2.6km²。湖畔の県立津久井湖城山公園に津久井城址（戦国期、北条家家臣が居城）と展望広場。蛭ヶ岳は神奈川県最高峰、丹沢山地の主峰。」
+→ 出力: {"deductions": [], "score": 5, "notes": "事実陳述のみ、情緒修飾なし"}
+
+例B（2点想定）:
+解説:「緑区は山と湖が美しい町です。春の訪れとともに桜が咲き誇り、心地よい春風が頬をなでる季節となりました。湖畔を歩けば、のんびりとした時間が流れます。」
+→ 出力: {"deductions": ["山と湖が美しい（情緒修飾）", "桜が咲き誇り（同）", "心地よい春風が頬をなで（同）", "のんびりとした時間が流れます（同）"], "score": 2, "notes": "情緒修飾で字数を消費、事実情報が薄い"}
+
+ではこの解説本文を採点してください。
+```
+
+#### 二十四節気のメタデータ
+
+Workers 内に `solar_term` 番号 → `{name, period}` のマッピングを持つ:
+
+```js
+const SOLAR_TERM_META = {
+  "01": { name: "立春", period: "2月4日頃〜雨水前" },
+  "02": { name: "雨水", period: "2月19日頃〜啓蟄前" },
+  // ... 24 個
+  "24": { name: "大寒", period: "1月20日頃〜立春前" },
+};
+```
+
+### 10.4 Judge 統合ロジック
+
+```js
+// workers/src/judge.js（疑似コード）
+async function judgeAll({ description, prefecture, municipality, solarTerm, env }) {
+  // 文字数チェック（即 NG なら他軸を呼ばずに早期リターン）
+  if (description.length < 120 || description.length > 180) {
+    return { passed: false, scores: null, lengthOk: false, error: null };
+  }
+
+  // Wikipedia 取得
+  const wikiExtract = await getWikipediaExtract(municipality, env);
+
+  // 4 軸並列呼出（Promise.all）
+  try {
+    const [accuracy, specificity, seasonFit, density] = await Promise.all([
+      callJudge("accuracy", { description, prefecture, municipality, solarTerm, wikiExtract }, env),
+      callJudge("specificity", { description, prefecture, municipality, solarTerm }, env),
+      callJudge("season_fit", { description, prefecture, municipality, solarTerm }, env),
+      callJudge("density", { description, prefecture, municipality, solarTerm }, env),
+    ]);
+
+    const passed = [accuracy, specificity, seasonFit, density].every(j => j.score >= 4);
+    return {
+      passed,
+      scores: { accuracy: accuracy.score, specificity: specificity.score, season_fit: seasonFit.score, density: density.score },
+      deductions: { accuracy: accuracy.deductions, specificity: specificity.deductions, season_fit: seasonFit.deductions, density: density.deductions },
+      lengthOk: true,
+      error: null,
+    };
+  } catch (e) {
+    return { passed: null, scores: null, lengthOk: true, error: e.message };
+  }
+}
+```
+
+- `error !== null` → fail-open（呼び出し側で生成のみ表示・キャッシュなし）
+- `passed === true` → キャッシュ書込
+- `passed === false` → 再生成へ（上限 2 回）
+
+### 10.5 `/api/describe` の拡張
+
+#### リクエスト
+
+変更なし（既存仕様：5.3 節）。
+
+#### レスポンス（成功 200）
+
+```json
+{
+  "description": "緑区は津久井湖と相模湖を抱える山岳地帯。...",
+  "judge_passed": true,
+  "judge_scores": {
+    "accuracy": 5,
+    "specificity": 4,
+    "season_fit": 5,
+    "density": 4
+  },
+  "regenerated": false,
+  "judge_error": null
+}
+```
+
+- `judge_passed`: 全 LLM 軸 4 点以上 + 文字数 OK なら true
+- `judge_scores`: 各軸スコア（fail-open 時は null）
+- `regenerated`: 1 回目で合格なら false、再生成発生で true
+- `judge_error`: judge 自体で例外発生時のメッセージ（fail-open 時のみ非 null）
+
+#### キャッシュ条件
+
+Workers 側で `judge_passed === true` のときのみ `{muni_code}_{solar_term}` をキーにキャッシュ書込。それ以外（`false` または fail-open `null`）はキャッシュしない。
+
+#### エラー応答
+
+既存の 400 / 401 / 502 は変更なし。Judge 内部の例外は 200 + `judge_error` で返す（生成自体は成功しているため）。
+
+### 10.6 S3 entry スキーマ更新
+
+`buildTelemetryEntry` および S3 PUT JSON のフィールドを以下に変更：
+
+```json
+{
+  "trace_id": "uuid-v4",
+  "muni_code": "14153",
+  "solar_term": "07",
+  "description": "...",
+  "ts_generated": 1234567890,
+
+  "critic_accuracy": 5,
+  "critic_specificity": 4,
+  "critic_season_fit": 5,
+  "critic_density": 4,
+  "critic_deductions": {
+    "accuracy": [],
+    "specificity": ["引用1"],
+    "season_fit": [],
+    "density": ["引用2", "引用3"]
+  },
+  "judge_passed": true,
+  "regenerated": false,
+  "judge_error": null,
+
+  "ts_displayed": null,
+  "ts_left": null,
+  "dwell_ms": null,
+  "re_visited_count": 0,
+  "user_rating": null,
+  "user_comment": null
+}
+```
+
+#### 廃止フィールド
+
+- `critic_meaningfulness`（Plan D 構想時の枠、Plan E では使わない）→ `buildTelemetryEntry` から削除
+
+#### 後方互換
+
+過去 entry（4.29 までの 8 件）には新規フィールドが存在しない。分析時は欠損を許容する。
+
+### 10.7 フロント UI 段階表示
+
+経過時間ベースで文言を切り替える（Workers のレスポンスは 1 回で完結するため、ストリーミングは使わない）。
+
+| 経過時間 | 文言 | 補足 |
+|---|---|---|
+| 0〜2 秒 | 📡 土地のたよりを生成中… | 既存ロード状態 |
+| 2〜5 秒 | ✓ 内容を確認しています… | judge にいる想定 |
+| 5 秒〜 | ✏️ より良い表現に書き直しています… | 再生成にいる想定 |
+
+レスポンス受信後、`regenerated === true` の場合は表示直前に 0.3 秒だけ「✏️」を残す（演出）。`judge_error !== null` の場合は通常表示（ユーザには judge 失敗を伝えない）。
+
+実装場所: `public/assets/api.js` のフェッチラッパに `setTimeout` で文言変更コールバックを仕込む。
+
+### 10.8 障害ハンドリング
+
+| 障害 | 挙動 |
+|---|---|
+| Wikipedia API タイムアウト / 5xx | extract = null、軸 1 は「Wikipedia 情報なし」前提で評価（保守的に高得点傾向） |
+| Wikipedia API 404（記事なし） | 同上 |
+| Sonnet judge レート制限 | 1 回だけリトライ（指数バックオフ 1秒）→ なお失敗なら fail-open |
+| Sonnet judge JSON パース失敗 | その軸は score=null として fail-open フラグを立てる |
+| 再生成（Haiku）も失敗 | 既存の 502 エラー応答に倣う |
+| 文字数 NG が 2 連続 | 通常通り表示・キャッシュなし（length 違反は generator プロンプト調整で潰す範疇） |
+
+---
+
+## 11. 次のステップ
+
+1. この第 10 章をてつてつがレビュー（このステップ）
+2. OK なら Plan E 実装開始（todo.md 6.1 〜 6.7 の順、TDD）
+3. 各 Phase 完了ごとにコミット + プッシュ + 進捗報告
