@@ -116,7 +116,7 @@
 ### 完了
 
 - [x] `docs/todo.md` / `docs/knowledge.md` 4.7 セクション更新
-- [ ] `feature/telemetry-aws` → main の PR 作成・マージ
+- [x] `feature/telemetry-aws` → main の PR 作成・マージ（PR #27、2026-04-29）
 
 ### LLM プロンプトを二十四節気・地名・歴史・地形対応に刷新（2026-04-29）
 
@@ -130,13 +130,69 @@
 
 ---
 
-## 将来的な改善（フェーズ2以降）
+## Phase 6 / Plan E: LLM as a judge（精度評価、計画中）
+
+詳細は `docs/plan.md` 第 10 章。
+
+### 6.1 Wikipedia API helper
+
+- [ ] `workers/src/wikipedia.js` 実装（`prop=extracts&exintro=true` で intro 取得）
+- [ ] Workers Cache API による 30 日キャッシュ
+- [ ] 政令指定都市の区 → Wikipedia タイトルのマッピング検証
+- [ ] Wikipedia ヒットしない / 失敗時の null 返却挙動
+- [ ] 単体テスト（モック fetch）
+
+### 6.2 Judge prompts（3 軸別）
+
+- [ ] `workers/src/judge_prompts.js`: 事実正確性 prompt（Wikipedia 抜粋を埋込）
+- [ ] 同: 具体性 prompt（汎用フレーズ引用列挙）
+- [ ] 同: 季節整合・文体 prompt（情緒・抒情・季節挨拶を引用列挙）
+- [ ] 各 prompt に Few-shot キャリブレーション例（3 点 / 5 点を 1 件ずつ）
+- [ ] 各 prompt に校閲者ロール + 「先に減点根拠引用、点数最後」のCoT 指示
+- [ ] スキーマ: `{ score: number, deductions: string[], notes: string }`
+
+### 6.3 Judge 統合
+
+- [ ] `workers/src/judge.js`: 3 軸を並列で Sonnet 4.6 に投げ、結果集約
+- [ ] 文字数機械判定（120〜180 字、外れたら即 NG）
+- [ ] 合格条件: LLM 軸全 4 点以上 + 文字数 OK
+- [ ] Judge 自体エラー時の `null` 返却（fail-open フラグ）
+- [ ] 単体テスト（モック Anthropic API）
+
+### 6.4 `/api/explain` への組込
+
+- [ ] 生成 → judge → NG なら 1 回だけ再生成 → 再 judge → 打ち切り
+- [ ] `judge_passed: true` のみキャッシュ書込
+- [ ] Judge エラー時（fail-open）はキャッシュなしで生成出力をそのまま返す
+- [ ] レスポンスに `judge_passed` / `judge_scores` / `regenerated` フィールド追加
+- [ ] 統合テスト（生成1回合格 / 1回NG→2回合格 / 2回NG / Judge障害）
+
+### 6.5 フロント UI 演出
+
+- [ ] `api.js`: judge レスポンスのハンドリング
+- [ ] `app.js`: 段階表示（生成中→確認中→（NG時）書き直し中→完成）
+- [ ] CSS: ローディングインジケータ
+- [ ] `telemetry.js`: `critic_*` および `judge_passed` フィールドを S3 に流す
+
+### 6.6 ドキュメント・本番反映
+
+- [ ] `docs/spec.md` に Plan E の API 仕様・プロンプト仕様・S3 スキーマ更新を追記
+- [ ] `docs/knowledge.md` 4.8 章として設計判断・実装ハマりどころを記録
+- [ ] `CLAUDE.md` に Sonnet 4.6 / Wikipedia API を技術スタックへ追記
+- [ ] Workers `wrangler deploy` で本番反映
+- [ ] 翌日実走で S3 に `judge_passed` / スコアが正しく入ることを確認
+
+---
+
+## 将来的な改善（Plan F 以降）
 
 - [ ] 道の駅の近隣表示（進行方向 ±60°、1200駅データ）
 - [ ] GPXエクスポート
 - [ ] オフライン対応（Service Worker）
 - [ ] React + Vite 移行
-- [ ] Wikipedia API によるLLMグラウンディング
+- [ ] Web 検索 API（Brave 等）による多源グラウンディング（Wikipedia の補完）
+- [ ] 既存キャッシュの遡及評価・無効化スクリプト（運用で必要になった時点で）
+- [ ] Judge スコアと dwell_ms 等の満足度シグナルの相関分析
 - [ ] 境界振動対策
 - [ ] Android Chrome 対応テスト
 - [ ] 本格アイコンデザイン
