@@ -78,12 +78,14 @@ describe('buildMessagesRequest', () => {
     });
     expect(req.model).toBe('claude-haiku-4-5-20251001');
     expect(req.max_tokens).toBe(400);
-    expect(req.system).toContain('観光ガイド');
+    expect(req.system).toContain('カーナビ');
     expect(req.system).toContain('120〜180字');
     expect(req.system).toContain('二十四節気');
     expect(req.system).toContain('地名');
     expect(req.system).toContain('歴史');
     expect(req.system).toContain('地形');
+    expect(req.system).toContain('情緒');
+    expect(req.system).toContain('マークダウン');
     expect(req.messages).toHaveLength(1);
     expect(req.messages[0].role).toBe('user');
     expect(req.messages[0].content).toContain('神奈川県');
