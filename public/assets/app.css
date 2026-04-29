@@ -17,6 +17,9 @@
   --color-border-subtle: rgba(255,255,255,0.06);
 
   --font-sans: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif;
+
+  /* 下部カード実高（map.js の ResizeObserver が上書き）。初期描画前のフォールバック */
+  --card-height: 320px;
 }
 
 * { box-sizing: border-box; }
@@ -172,12 +175,12 @@ body {
   top: 0;
   left: 0;
   right: 0;
-  bottom: 320px;
+  bottom: var(--card-height);
   background: var(--color-bg-map);
 }
 .map-attribution {
   position: absolute;
-  bottom: 332px;
+  bottom: calc(var(--card-height) + 12px);
   right: 12px;
   background: rgba(22,22,24,0.9);
   padding: 4px 8px;
@@ -189,11 +192,19 @@ body {
 
 .bottom-card {
   position: absolute;
-  bottom: env(safe-area-inset-bottom, 0);
+  /* bottom は画面下端に張り付ける。home indicator 分（safe-area-inset-bottom）は
+     padding-bottom で吸収する。bottom 側を env() で底上げすると card.offsetHeight に
+     その分が含まれなくなり、--card-height（map の bottom）と食い違って
+     iPhone 実機で地図領域が card 上端より下まで侵入し、muni-row の上半分が
+     地図タイル（白系）に同化して見えなくなる事象が発生する。 */
+  bottom: 0;
   left: 0;
   right: 0;
-  background: linear-gradient(180deg, rgba(15,15,16,0) 0%, var(--color-bg) 14%, var(--color-bg) 100%);
-  padding: 28px 20px 20px;
+  /* 不透明境界を 44px 固定で打ち切り、muni-row top（card top + 92px）の手前で確実に opaque にする。
+     旧設計の % 比率指定だとカード高さが大きいときに muni-row が透明グラデーション内に入り、
+     後ろの淡色地図が透けて文字が見えなくなる事象を防ぐ。 */
+  background: linear-gradient(180deg, rgba(15,15,16,0) 0px, var(--color-bg) 44px, var(--color-bg) 100%);
+  padding: 28px 20px calc(20px + env(safe-area-inset-bottom, 0));
   z-index: 6;
 }
 
@@ -202,7 +213,7 @@ body {
   height: 4px;
   background: #3a3a3e;
   border-radius: 2px;
-  margin: 0 auto 18px;
+  margin: 0 auto 60px;
 }
 
 .muni-row {

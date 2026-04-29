@@ -51,6 +51,19 @@ export function initMap(containerId) {
   });
   window.addEventListener('orientationchange', refreshSize);
 
+  // 下部カードの実高を CSS 変数 --card-height に反映する。
+  // 「土地のたより」本文の長さでカードが可変なので、固定 320px だと長文時に
+  // 地図領域とカード不透明部が重なって地図ラベルが隠れる事象を防ぐ。
+  const card = document.querySelector('.bottom-card');
+  if (card && typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(() => {
+      const h = card.offsetHeight;
+      document.documentElement.style.setProperty('--card-height', `${h}px`);
+      if (map) map.invalidateSize();
+    });
+    ro.observe(card);
+  }
+
   return map;
 }
 

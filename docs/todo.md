@@ -1,6 +1,6 @@
 # trip-road タスク一覧
 
-**最終更新**: 2026-04-23
+**最終更新**: 2026-04-27
 
 ---
 
@@ -70,6 +70,9 @@
 - [x] パスワード入力UI + エラー表示 + 免責表示
 - [x] 純粋関数 3 モジュール（season/cache/storage）を vitest で 10 テスト pass
 - [x] バグ修正: 最小化→復帰時の地図サイズ崩れ（visibilitychange + invalidateSize）
+- [x] バグ修正: 下部カードの3層レイアウトバグ（地図ラベル隠れ + muni-row 上半分透け + iPhone 実機での safe-area 食い違い）
+      → ResizeObserver で `--card-height` 動的反映 + gradient を px 固定（2026-04-27、`knowledge.md` 4.X 章）
+      → `.bottom-card` を `bottom: 0` に張替え + padding-bottom で safe-area-inset-bottom を吸収（2026-04-29、3 層目）
 
 ## Phase 4: デプロイ＆実機確認（完了）
 
@@ -82,6 +85,38 @@
 - [x] 実走テスト（実機、市町村切替・LLM 解説生成・軌跡描画すべて確認）
 - [x] LLM解説品質の実使用確認（プロンプト設計通りに具体的地名 + 季節感、日付なし）
 - [x] Playwright E2E 4 テスト pass（Chromium iPhone エミュレーション、本番ドメイン対象）
+
+---
+
+## Phase 5: テレメトリ + AWS S3 Sink + LLM 分析（Plan D）
+
+### Stage 1: localStorage 蓄積 + 手動エクスポート
+
+- [x] `telemetry.js`（trace_id 生成、entry 組立、サンプリング）TDD
+- [x] `storage.js` 拡張（appendTelemetry / updateTelemetry / batch CRUD）TDD
+- [x] `app.js` に呼出 site 4 箇所追加
+- [x] 手動エクスポート UI（フッター 📤 ボタン）
+
+### Stage 2: AWS 自動 sink
+
+- [x] S3 バケット + IAM 作成（最小権限 s3:PutObject）
+- [x] `aws4fetch` 導入 + `workers/src/aws.js`
+- [x] `/api/telemetry` エンドポイント追加 + 本番デプロイ
+- [x] フロント自動 flush（市町村切替の都度即送信、60 秒タイマーは失敗時リトライ）
+- [x] 漏洩アクセスキーのローテーション（IAM 新規作成 → ローカル / Workers 更新 → 旧削除）
+
+### Stage 3: LLM 分析セットアップ（当初の Athena 案から方針変更）
+
+- [x] `docs/analysis/fetch_entries.sh`（S3 → ローカル JSONL 集約）
+- [x] `docs/analysis/prompts.md`（3 種プロンプトテンプレ）
+- [x] `docs/analysis/README.md`（使い方ガイド）
+- [x] `.gitignore` に `docs/analysis/data/` 追加
+- [x] IAM ポリシーを analysis 用に拡張（`s3:ListBucket` / `s3:GetObject` / `s3:DeleteObject`）
+
+### 完了
+
+- [x] `docs/todo.md` / `docs/knowledge.md` 4.7 セクション更新
+- [ ] `feature/telemetry-aws` → main の PR 作成・マージ
 
 ---
 
