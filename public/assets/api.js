@@ -54,3 +54,40 @@ export async function fetchDescription(password, req) {
 
   return lastError;
 }
+
+/**
+ * テレメトリバッチを Workers `/api/telemetry` に送る。
+ * 失敗時は 1 回だけリトライ（2 秒後）、それ以上は呼出側で諦める（次回 flush で再送）。
+ *
+ * @param {string} password - X-App-Password に送る値
+ * @param {Array<object>} entries - 送信する entry 配列（非空）
+ * @returns {Promise<{ok: true, key: string} | {ok: false, status: number, error: string}>}
+ */
+export async function sendTelemetryBatch(password, entries) {
+  let lastError = { ok: false, status: 0, error: 'unknown' };
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/telemetry`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-App-Password': password,
+        },
+        body: JSON.stringify({ entries }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return { ok: true, key: data.key };
+      }
+      if (res.status === 401) {
+        return { ok: false, status: 401, error: 'unauthorized' };
+      }
+      lastError = { ok: false, status: res.status, error: 'upstream_error' };
+    } catch (e) {
+      lastError = { ok: false, status: 0, error: String(e) };
+    }
+    if (attempt === 0) await sleep(2000);
+  }
+  return lastError;
+}
