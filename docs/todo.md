@@ -142,18 +142,19 @@
 - [ ] Wikipedia ヒットしない / 失敗時の null 返却挙動
 - [ ] 単体テスト（モック fetch）
 
-### 6.2 Judge prompts（3 軸別）
+### 6.2 Judge prompts（4 軸別）
 
-- [ ] `workers/src/judge_prompts.js`: 事実正確性 prompt（Wikipedia 抜粋を埋込）
-- [ ] 同: 具体性 prompt（汎用フレーズ引用列挙）
-- [ ] 同: 季節整合・文体 prompt（情緒・抒情・季節挨拶を引用列挙）
+- [ ] `workers/src/judge_prompts.js`: 事実正確性 prompt（Wikipedia 抜粋を埋込、根拠なき記述を引用列挙）
+- [ ] 同: 具体性 prompt（固有名詞の含有度合いを評価、汎用フレーズを引用列挙）
+- [ ] 同: 季節整合 prompt（二十四節気と矛盾する記述を引用列挙）
+- [ ] 同: 情報密度 prompt（情緒修飾に字数を取られていないか・事実が淡々と伝わっているかを評価）
 - [ ] 各 prompt に Few-shot キャリブレーション例（3 点 / 5 点を 1 件ずつ）
 - [ ] 各 prompt に校閲者ロール + 「先に減点根拠引用、点数最後」のCoT 指示
 - [ ] スキーマ: `{ score: number, deductions: string[], notes: string }`
 
 ### 6.3 Judge 統合
 
-- [ ] `workers/src/judge.js`: 3 軸を並列で Sonnet 4.6 に投げ、結果集約
+- [ ] `workers/src/judge.js`: 4 軸を並列で Sonnet 4.6 に投げ、結果集約
 - [ ] 文字数機械判定（120〜180 字、外れたら即 NG）
 - [ ] 合格条件: LLM 軸全 4 点以上 + 文字数 OK
 - [ ] Judge 自体エラー時の `null` 返却（fail-open フラグ）
