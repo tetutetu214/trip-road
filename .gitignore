@@ -56,3 +56,6 @@ tests/e2e/report/
 test-results/
 playwright-report/
 .playwright-cache/
+
+# テレメトリ分析の取得データ（個人の移動ログそのものなのでコミットしない）
+docs/analysis/data/
