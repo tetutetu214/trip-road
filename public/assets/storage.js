@@ -4,10 +4,14 @@
  * キー "trip-road-state" に単一 JSON オブジェクトを保存する形式:
  *   {
  *     password: string | null,
- *     visited: { [code]: { name, prefecture, firstVisit, descriptions: {spring, summer, autumn, winter} } },
+ *     visited: { [code]: { name, prefecture, firstVisit, descriptions: { [solarTerm]: text } } },
  *     track: [{ lat, lon, ts }],
  *     currentMuniCd: string | null
  *   }
+ *
+ * descriptions のキーは二十四節気の番号文字列（'01'〜'24'）。
+ * 旧バージョンでは spring/summer/autumn/winter の固定4キーだったが、24節気採用に伴い
+ * 可変キー構造に変更した。旧キャッシュは読み出されず自然消滅する。
  */
 
 const STORAGE_KEY = 'trip-road-state';
@@ -54,7 +58,7 @@ export function markVisited(code, name, prefecture) {
       name,
       prefecture,
       firstVisit: new Date().toISOString(),
-      descriptions: { spring: null, summer: null, autumn: null, winter: null },
+      descriptions: {},
     };
   }
   state.currentMuniCd = code;
@@ -65,16 +69,17 @@ export function getVisitedCount() {
 }
 
 // === Description cache ===
-export function getCachedDescription(code, season) {
+// キーは二十四節気の番号文字列（'01'〜'24'）。
+export function getCachedDescription(code, solarTerm) {
   const v = loadState().visited[code];
   if (!v) return null;
-  return v.descriptions?.[season] ?? null;
+  return v.descriptions?.[solarTerm] ?? null;
 }
-export function setCachedDescription(code, season, text) {
+export function setCachedDescription(code, solarTerm, text) {
   const state = loadState();
   if (!state.visited[code]) return; // markVisited が先行する前提
   state.visited[code].descriptions ??= {};
-  state.visited[code].descriptions[season] = text;
+  state.visited[code].descriptions[solarTerm] = text;
   saveState(state);
 }
 

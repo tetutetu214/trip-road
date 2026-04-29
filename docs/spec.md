@@ -184,8 +184,8 @@ GET https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?lat={lat
 2. `visited[code]` に未登録なら登録（制覇カウント +1、UI 更新）
 3. `adjacency[code]` から隣接コード一覧を取得
 4. 未ロード隣接を `Promise.all` で並列 fetch（fire-and-forget でもよい）
-5. 季節判定: `getSeason(new Date())`
-6. `visited[code].descriptions[season]` 確認
+5. 二十四節気判定: `getSolarTerm(new Date())`（'01'〜'24' を返す）
+6. `visited[code].descriptions[solarTerm]` 確認
    - 存在 → そのテキストを「土地のたより」にフェードイン表示、API 呼出なし
    - 未存在 → LLM 呼出フロー（3.3）
 
@@ -195,21 +195,30 @@ GET https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?lat={lat
 
 ### 3.3 土地のたより生成（LLM）
 
-**季節判定**：
+**二十四節気判定**：
+
+日付から二十四節気の番号文字列（'01' 立春 〜 '24' 大寒）を返す。境界日は太陽黄経で正確に計算すべきだが、年により±1日のずれがあるだけなので、固定の月日テーブルで近似する（`public/assets/season.js`）。
+
 ```javascript
-function getSeason(date) {
-  const m = date.getMonth() + 1;
-  if (m >= 3 && m <= 5) return 'spring';
-  if (m >= 6 && m <= 8) return 'summer';
-  if (m >= 9 && m <= 11) return 'autumn';
-  return 'winter';
+// 節気開始日テーブル（mmdd = month*100+day、年内昇順）
+//   23 小寒 0106, 24 大寒 0120, 01 立春 0204, 02 雨水 0219, ...
+//   21 大雪 1207, 22 冬至 1222
+// 1/1〜1/5 は前年の冬至期間にあたるため 22 を返す。
+function getSolarTerm(date) {
+  const mmdd = (date.getMonth() + 1) * 100 + date.getDate();
+  let id = 22;
+  for (const t of SOLAR_TERM_BOUNDARIES) {
+    if (t.mmdd <= mmdd) id = t.id;
+    else break;
+  }
+  return String(id).padStart(2, '0');
 }
 ```
 
 **呼出フロー**：
 1. ローディング状態（2.5）に遷移
 2. `POST {WORKERS_URL}/api/describe`（本仕様 5 節参照）
-3. 成功 → `visited[code].descriptions[season]` にキャッシュ、カードにフェードイン（200ms opacity 0→1）
+3. 成功 → `visited[code].descriptions[solarTerm]` にキャッシュ、カードにフェードイン（200ms opacity 0→1）
 4. 失敗 → 1秒後に再試行、2秒後に再試行、4秒後に再試行。最終失敗時は 2.3(c) LLM 失敗状態
 
 **リトライ判定**：
@@ -325,10 +334,8 @@ const trackLine = L.polyline([], {
       "prefecture": "神奈川県",
       "firstVisit": "2026-04-22T10:00:00.000Z",
       "descriptions": {
-        "spring": "緑区は津久井湖や相模湖を抱く、山と水の町です。...",
-        "summer": null,
-        "autumn": null,
-        "winter": null
+        "07": "立夏のころ、緑区の津久井湖畔は新緑がまぶしく…",
+        "16": "秋分のころ、相模川の河岸段丘では稲刈りが始まり…"
       }
     }
   },
@@ -341,7 +348,7 @@ const trackLine = L.polyline([], {
 
 **キー説明**:
 - `password`: 認証パスワード（平文保存、端末紛失時のリスクは許容）
-- `visited`: 訪問済み市町村情報とLLM解説キャッシュ
+- `visited`: 訪問済み市町村情報とLLM解説キャッシュ。`descriptions` のキーは二十四節気の番号文字列（'01'〜'24'）で、訪れた節気だけが追加される可変構造
 - `track`: 通過軌跡、上限 5000 点（PoC では超過時ノーオペ、Phase 2 でトリム）
 - `currentMuniCd`: 現在の市町村コード（起動時復元用）
 
@@ -390,12 +397,12 @@ X-App-Password: a3f9b12c8e4d6710ff293a4bc1e8d5d2
 {
   "prefecture": "神奈川県",
   "municipality": "相模原市緑区",
-  "season": "spring"
+  "solar_term": "07"
 }
 ```
 
-必須フィールド: `prefecture` / `municipality` / `season`  
-`season` の値: `"spring" | "summer" | "autumn" | "winter"`
+必須フィールド: `prefecture` / `municipality` / `solar_term`  
+`solar_term` の値: 二十四節気の番号文字列 `"01"`〜`"24"`（'01' 立春 〜 '24' 大寒）
 
 ### 5.4 レスポンス
 
@@ -411,7 +418,7 @@ X-App-Password: a3f9b12c8e4d6710ff293a4bc1e8d5d2
 
 **リクエスト不正** (400):
 ```json
-{ "error": "bad_request", "detail": "missing required field: season" }
+{ "error": "bad_request", "detail": "missing required field: solar_term" }
 ```
 
 **上流エラー** (502):
@@ -441,16 +448,20 @@ X-App-Password: a3f9b12c8e4d6710ff293a4bc1e8d5d2
 ### 6.1 System prompt（Workers 側に直書き）
 
 ```
-あなたは日本の旅行ガイドです。指定された都道府県・市区町村・季節から、旅人が通過する際に楽しめる3〜4文の観光ガイド文を書いてください。
+あなたは日本の旅行ガイドです。指定された都道府県・市区町村・二十四節気から、旅人が通過する際に楽しめる3〜4文の観光ガイド文を書いてください。
 
 以下のルールを守ってください：
 - 文体は「です・ます調」の現代的な観光ガイド
 - 120〜180字の範囲に収める
-- 歴史・地形・名物・特産品は具体的に書いてよい
-- 祭りやイベントの具体的な日付・回数・年号は書かない（代わりに「例年◯月頃」と表現する）
-- その土地の「春/夏/秋/冬」の季節感（旬の食材・景色・花・魚など）に必ず触れる
-- プレーンテキストのみ、マークダウン記法や箇条書きは使わない
+- 二十四節気の季節感（その節気特有の旬・景色・花・気候）には必ず触れる
+- 以下の要素は、その土地で確信を持って書ける範囲だけ含める（無理に全部書こうとしない、書けるものだけでよい）：
+  - 具体的な地名（山・川・峠・湖・旧街道・神社仏閣・港・台地など固有名詞）
+  - 歴史的背景（城下町・宿場町・港町・産業の起こりなど）
+  - 地形的特徴（盆地・河岸段丘・扇状地・リアス海岸・台地・カルデラなど）
+  - 名物・特産品
 - 確信が持てない情報は無理に書かない（情報量が減っても正確さを優先）
+- 祭りやイベントの具体的な日付・回数・年号は書かない（代わりに「例年◯月頃」と表現する）
+- プレーンテキストのみ、マークダウン記法や箇条書きは使わない
 - 旅情を損なう過度な商業表現（「おすすめ！」など）は避ける
 ```
 
@@ -459,10 +470,11 @@ X-App-Password: a3f9b12c8e4d6710ff293a4bc1e8d5d2
 ```
 都道府県: {prefecture}
 市区町村: {municipality}
-季節: {season_ja}
+二十四節気: {solar_term_ja}（{solar_term}）
 ```
 
-`season_ja` は: spring→春、summer→夏、autumn→秋、winter→冬 と変換。
+`solar_term_ja` は番号文字列（'01'〜'24'）を日本語名に変換した値。
+例: '01'→立春、'07'→立夏、'16'→秋分、'22'→冬至。
 
 ### 6.3 Anthropic Messages API 呼出パラメータ
 
@@ -479,14 +491,14 @@ X-App-Password: a3f9b12c8e4d6710ff293a4bc1e8d5d2
 
 ### 6.4 出力例
 
-**入力**: 神奈川県 / 相模原市緑区 / 春  
+**入力**: 神奈川県 / 相模原市緑区 / 立夏（07）  
 **期待出力**:
-> 緑区は津久井湖や相模湖を抱く、山と水の町です。春は桜が湖畔を彩り、例年4月には山間部の棚田にも花が咲き始めます。津久井やまゆりラインの沿道では、地場の柚子やこんにゃくが並ぶ直売所が旅人を迎えてくれます。
+> 立夏のころ、津久井湖や相模湖を抱く緑区は新緑がいっせいに芽吹く季節です。丹沢山地のすそ野に広がる起伏ある地形は、古くは津久井城を中心とした要衝で、いまも津久井やまゆりラインに往時の面影が残ります。沿道の直売所には、土地の柚子やこんにゃくが並びはじめます。
 
 **避けたい出力**（ハルシネーション例）:
 > 相模原市緑区では第45回さくら祭りが4月5日から開催されます。
 
-具体的な回数・日付・年号を書かせないのがプロンプトの狙い。
+具体的な回数・日付・年号を書かせないのがプロンプトの狙い。地名・歴史・地形は「確信を持って書ける範囲」とし、不明なものは無理に盛り込ませない（情報量より正確さ優先）。
 
 ---
 
@@ -538,8 +550,8 @@ X-App-Password: a3f9b12c8e4d6710ff293a4bc1e8d5d2
 ### 8.1 単体テスト
 
 対象：
-- `getSeason(date)` の境界条件（2/28, 3/1, 5/31, 6/1, 8/31, 9/1, 11/30, 12/1）
-- キャッシュキー生成: `${code}_${season}`
+- `getSolarTerm(date)` の境界条件（1/5↔1/6 冬至→小寒、1/19↔1/20 小寒→大寒、2/3↔2/4 大寒→立春、3/20↔3/21 啓蟄→春分、12/21↔12/22 大雪→冬至 ほか）
+- キャッシュキー生成: `${code}_${solarTerm}`（節気番号は'01'〜'24'）
 - 市町村切替判定
 - localStorage 保存/復元
 
@@ -556,7 +568,7 @@ X-App-Password: a3f9b12c8e4d6710ff293a4bc1e8d5d2
 curl -X POST http://localhost:8787/api/describe \
   -H "Content-Type: application/json" \
   -H "X-App-Password: {test_password}" \
-  -d '{"prefecture":"神奈川県","municipality":"相模原市緑区","season":"spring"}'
+  -d '{"prefecture":"神奈川県","municipality":"相模原市緑区","solar_term":"07"}'
 
 # 認証失敗
 curl -X POST http://localhost:8787/api/describe \

@@ -1,14 +1,59 @@
 /**
- * 日付から日本の季節（spring/summer/autumn/winter）を返す。
- * 3-5月=春、6-8月=夏、9-11月=秋、12-2月=冬。
+ * 日付から二十四節気の番号（'01'〜'24'）を返す。
+ *
+ * 番号と節気名の対応:
+ *   01 立春 / 02 雨水 / 03 啓蟄 / 04 春分 / 05 清明 / 06 穀雨
+ *   07 立夏 / 08 小満 / 09 芒種 / 10 夏至 / 11 小暑 / 12 大暑
+ *   13 立秋 / 14 処暑 / 15 白露 / 16 秋分 / 17 寒露 / 18 霜降
+ *   19 立冬 / 20 小雪 / 21 大雪 / 22 冬至 / 23 小寒 / 24 大寒
+ *
+ * 境界日は太陽黄経で正確に計算すべきだが、年により±1日のずれがあるだけなので
+ * 旅情アプリでは固定の月日テーブルで近似する（保守容易・テスト容易）。
+ *
+ * 1/1〜1/5 は前年の冬至期間にあたるため 22（冬至）を返す。
+ */
+
+// 節気開始日を年内の昇順で並べたテーブル。mmdd は month*100+day。
+const SOLAR_TERM_BOUNDARIES = [
+  { id: 23, mmdd: 106 },   // 小寒 01-06
+  { id: 24, mmdd: 120 },   // 大寒 01-20
+  { id: 1,  mmdd: 204 },   // 立春 02-04
+  { id: 2,  mmdd: 219 },   // 雨水 02-19
+  { id: 3,  mmdd: 306 },   // 啓蟄 03-06
+  { id: 4,  mmdd: 321 },   // 春分 03-21
+  { id: 5,  mmdd: 405 },   // 清明 04-05
+  { id: 6,  mmdd: 420 },   // 穀雨 04-20
+  { id: 7,  mmdd: 506 },   // 立夏 05-06
+  { id: 8,  mmdd: 521 },   // 小満 05-21
+  { id: 9,  mmdd: 606 },   // 芒種 06-06
+  { id: 10, mmdd: 621 },   // 夏至 06-21
+  { id: 11, mmdd: 707 },   // 小暑 07-07
+  { id: 12, mmdd: 723 },   // 大暑 07-23
+  { id: 13, mmdd: 808 },   // 立秋 08-08
+  { id: 14, mmdd: 823 },   // 処暑 08-23
+  { id: 15, mmdd: 908 },   // 白露 09-08
+  { id: 16, mmdd: 923 },   // 秋分 09-23
+  { id: 17, mmdd: 1008 },  // 寒露 10-08
+  { id: 18, mmdd: 1024 },  // 霜降 10-24
+  { id: 19, mmdd: 1107 },  // 立冬 11-07
+  { id: 20, mmdd: 1122 },  // 小雪 11-22
+  { id: 21, mmdd: 1207 },  // 大雪 12-07
+  { id: 22, mmdd: 1222 },  // 冬至 12-22
+];
+
+/**
+ * 日付から二十四節気の番号文字列を返す。
  *
  * @param {Date} [date=new Date()] - 判定する日付
- * @returns {'spring'|'summer'|'autumn'|'winter'}
+ * @returns {string} '01'〜'24' のゼロ詰め2桁文字列
  */
-export function getSeason(date = new Date()) {
-  const m = date.getMonth() + 1;
-  if (m >= 3 && m <= 5) return 'spring';
-  if (m >= 6 && m <= 8) return 'summer';
-  if (m >= 9 && m <= 11) return 'autumn';
-  return 'winter';
+export function getSolarTerm(date = new Date()) {
+  const mmdd = (date.getMonth() + 1) * 100 + date.getDate();
+  // 1/1〜1/5 は前年の冬至期間
+  let id = 22;
+  for (const t of SOLAR_TERM_BOUNDARIES) {
+    if (t.mmdd <= mmdd) id = t.id;
+    else break;
+  }
+  return String(id).padStart(2, '0');
 }

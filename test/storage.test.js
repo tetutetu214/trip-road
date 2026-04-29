@@ -59,13 +59,13 @@ describe('visited helpers', () => {
 });
 
 describe('description cache', () => {
-  it('setCachedDescription / getCachedDescription', () => {
+  it('setCachedDescription / getCachedDescription（節気番号キー）', () => {
     markVisited('14151', '相模原市緑区', '神奈川県');
-    expect(getCachedDescription('14151', 'spring')).toBeNull();
-    setCachedDescription('14151', 'spring', '緑区は…');
-    expect(getCachedDescription('14151', 'spring')).toBe('緑区は…');
-    // 違う季節はまだ null
-    expect(getCachedDescription('14151', 'summer')).toBeNull();
+    expect(getCachedDescription('14151', '07')).toBeNull();   // 立夏
+    setCachedDescription('14151', '07', '緑区は…');
+    expect(getCachedDescription('14151', '07')).toBe('緑区は…');
+    // 違う節気はまだ null
+    expect(getCachedDescription('14151', '13')).toBeNull();   // 立秋
   });
 });
 

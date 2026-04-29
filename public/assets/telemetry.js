@@ -25,14 +25,15 @@ export function generateTraceId() {
  * テレメトリ entry を組み立てる（生成直後）。
  * その後 storage.js に appendTelemetry で追加し、表示・離脱時に updateTelemetry で更新。
  *
- * @param {{trace_id: string, muni_code: string, season: string, description: string, ts_generated: number}} args
+ * @param {{trace_id: string, muni_code: string, solar_term: string, description: string, ts_generated: number}} args
+ *   solar_term は二十四節気の番号文字列（'01'〜'24'）
  * @returns {object}
  */
 export function buildTelemetryEntry(args) {
   return {
     trace_id: args.trace_id,
     muni_code: args.muni_code,
-    season: args.season,
+    solar_term: args.solar_term,
     description: args.description,
     ts_generated: args.ts_generated,
 

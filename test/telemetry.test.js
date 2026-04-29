@@ -18,17 +18,17 @@ describe('generateTraceId', () => {
 });
 
 describe('buildTelemetryEntry', () => {
-  it('必須フィールドが揃った entry を返す', () => {
+  it('必須フィールドが揃った entry を返す（solar_term は二十四節気番号）', () => {
     const entry = buildTelemetryEntry({
       trace_id: 'test-id',
       muni_code: '11210',
-      season: 'spring',
+      solar_term: '04',  // 春分
       description: '埼玉県久喜市…',
       ts_generated: 1745000000000,
     });
     expect(entry.trace_id).toBe('test-id');
     expect(entry.muni_code).toBe('11210');
-    expect(entry.season).toBe('spring');
+    expect(entry.solar_term).toBe('04');
     expect(entry.description).toBe('埼玉県久喜市…');
     expect(entry.ts_generated).toBe(1745000000000);
     expect(entry.ts_displayed).toBeNull();
