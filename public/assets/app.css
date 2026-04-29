@@ -213,7 +213,9 @@ body {
   height: 4px;
   background: #3a3a3e;
   border-radius: 2px;
-  margin: 0 auto 60px;
+  /* margin-bottom は muni-row top を gradient 不透明境界（44px）より下に置くために確保。
+     padding-top(28px) + drag-handle高さ(4px) + 20px = muni-row top 52px で 8px の安全マージン。 */
+  margin: 0 auto 20px;
 }
 
 .muni-row {
