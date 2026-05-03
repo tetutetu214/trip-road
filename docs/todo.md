@@ -1,6 +1,6 @@
 # trip-road タスク一覧
 
-**最終更新**: 2026-05-03（6.5 完了）
+**最終更新**: 2026-05-03（6.6 完了、PR #30 マージ済）
 
 ---
 
@@ -208,11 +208,11 @@
 
 ### 6.6 ドキュメント・本番反映
 
-- [ ] `docs/spec.md` に Plan E の API 仕様・プロンプト仕様・S3 スキーマ更新を追記
-- [ ] `docs/knowledge.md` 4.8 章として設計判断・実装ハマりどころを記録
-- [ ] `CLAUDE.md` に Sonnet 4.6 / Wikipedia API を技術スタックへ追記
-- [ ] Workers `wrangler deploy` で本番反映
-- [ ] 翌日実走で S3 に `judge_passed` / スコアが正しく入ることを確認
+- [x] `docs/spec.md` に Plan E の API 仕様・プロンプト仕様・S3 スキーマ更新を追記（10.1〜10.8）
+- [x] `docs/knowledge.md` 4.8〜4.13 章として設計判断・実装ハマりどころを記録
+- [x] `CLAUDE.md` に Sonnet 4.6 / Wikipedia API / S3 / aws4fetch を技術スタックへ追記、参考リンクに Wikipedia API + Cloudflare Cache API 追加
+- [ ] Workers `wrangler deploy` で本番反映（6.7）
+- [ ] 翌日実走で S3 に `judge_passed` / スコアが正しく入ることを確認（6.7）
 
 ---
 

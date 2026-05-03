@@ -13,19 +13,27 @@ GPS ベースの旅ガイド Webアプリ。電車・徒歩移動中に iPhone S
 - **フロントエンド**: Vanilla JS + HTML + CSS
 - **地図**: Leaflet.js 1.9.4（背景は地理院タイル 淡色地図）
 - **空間演算**: Turf.js（booleanPointInPolygon のみ使用）
-- **バックエンド**: Cloudflare Workers（認証 + Anthropic API プロキシ）
-- **LLM**: Claude Haiku（`claude-haiku-4-5-20251001`）
+- **バックエンド**: Cloudflare Workers（認証 + Anthropic API プロキシ + Plan E Judge 統合）
+- **LLM (生成)**: Claude Haiku（`claude-haiku-4-5-20251001`）— 土地のたよりを生成
+- **LLM (Judge)**: Claude Sonnet 4.6（`claude-sonnet-4-6` エイリアス）— 4 軸並列で出力を評価し、合格時のみキャッシュ書込（Plan E）
+- **RAG**: 日本語版 Wikipedia API（`https://ja.wikipedia.org/w/api.php`）— Judge 軸 1（事実正確性）の根拠資料、Workers Cache API で 30 日 TTL
 - **静的配信**: Cloudflare Pages
+- **テレメトリ Sink**: AWS S3（パーティション: `year=YYYY/month=MM/day=DD/`）
 - **データ前処理**: Python 3.12 + geopandas + shapely、Google Cloud Shell 上で実行
-- **パッケージ管理**: wrangler CLI（Cloudflare）、pip（Python）
+- **パッケージ管理**: wrangler CLI（Cloudflare）、pip（Python）、aws4fetch（Workers から S3 SigV4）
 
 ## 3. インフラ構成
 
-- **Cloudflare Pages**: `public/` ディレクトリを配信、ドメインは `trip-road.pages.dev`（独自ドメインなし）
-- **Cloudflare Workers**: `workers/` の Worker を別サービスとしてデプロイ
-- **Workers Secrets**: `APP_PASSWORD`（32文字hex）と `ANTHROPIC_API_KEY` を保管
+- **Cloudflare Pages**: `public/` ディレクトリを配信、独自ドメイン `trip-road.tetutetu214.com`
+- **Cloudflare Workers**: `workers/` の Worker を `trip-road-api.tetutetu214.com` で配信
+- **Workers Secrets**:
+   - `APP_PASSWORD`（32文字hex）
+   - `ANTHROPIC_API_KEY`（Haiku 生成 + Sonnet Judge で共用）
+   - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` / `S3_TELEMETRY_BUCKET`（テレメトリ Sink 用 IAM）
 - **外部 API**:
-   - Anthropic API: Workers 経由でのみ呼出
+   - Anthropic API: Workers 経由でのみ呼出（Haiku 生成 + Sonnet Judge）
+   - Wikipedia API（ja.wikipedia.org）: Workers から直接、User-Agent 必須、Cache API で 30 日キャッシュ
+   - AWS S3: Workers から SigV4 署名付きで PUT（aws4fetch ライブラリ）
    - 国土地理院 逆ジオコーダ: ブラウザから直接（フォールバック用途）
    - 地理院タイル: ブラウザから直接（Leaflet の TileLayer）
 
@@ -113,7 +121,10 @@ wrangler pages deploy public/ --project-name=trip-road
 - 地理院タイル: https://maps.gsi.go.jp/development/ichiran.html
 - 国土地理院 逆ジオコーダ: https://maps.gsi.go.jp/development/reversegeocode.html
 - Cloudflare Workers: https://developers.cloudflare.com/workers/
+- Cloudflare Cache API（Workers）: https://developers.cloudflare.com/workers/runtime-apis/cache/
 - Anthropic API: https://docs.anthropic.com/
+- Wikipedia API (extracts): https://www.mediawiki.org/wiki/Extension:TextExtracts
+- Wikipedia User-Agent ポリシー: https://meta.wikimedia.org/wiki/User-Agent_policy
 
 ## 10. ライセンス・出典表記（必須）
 
