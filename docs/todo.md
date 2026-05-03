@@ -221,6 +221,13 @@
 - [x] 相模原市南区で軸 1 の事実検証が機能（「茶畑」「古淵駅中心」「江戸期の河岸」を Wikipedia 不在として正しく減点）
 - [ ] **翌日実走（人間タスク）**: iPhone 実機で `https://trip-road.tetutetu214.com/` を開いて GPS 移動、市町村切替時の段階表示・⚙️ デバッグオーバーレイ動作確認、翌日 `bash docs/analysis/fetch_entries.sh` で Plan E 集計が出ることを確認
 
+### 6.8 再生成完了後の loading-text 残留バグ修正（完了 2026-05-03）
+
+- [x] `public/assets/ui.js` の `setDescription` / `clearDescription` で `#description-loading-text` を `hidden` 化
+- [x] `test/ui_dom.test.js` を新設し、依存追加なしで `globalThis.document` をスタブして DOM 副作用を検証（4 ケース）
+- [x] `docs/knowledge.md` 4.14 章にバグの原因と教訓を記録
+- [ ] **本番反映 + 実機確認（人間タスク）**: Pages 反映後に iPhone で「再生成→本文表示」の遷移で loading-text が消えること、通常生成でも残留しないことを確認
+
 ---
 
 ## Plan F: Plan E 完成度向上 + 観測強化

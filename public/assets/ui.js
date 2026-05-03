@@ -39,6 +39,10 @@ export function setDescription(text) {
   const body = $('description');
   const skel = $('description-skeleton');
   skel.classList.add('hidden');
+  // 再生成完了時に「より良い表現に書き直しています…」が残らないよう、
+  // ローディング文言要素も明示的に隠す（skeleton と loading-text は別要素）
+  const txt = $('description-loading-text');
+  if (txt) txt.classList.add('hidden');
   body.classList.remove('muted');
   body.textContent = text;
   body.style.opacity = 0;
@@ -91,6 +95,8 @@ export function phaseToText(phase) {
 export function clearDescription() {
   $('description').textContent = '';
   $('description-skeleton').classList.add('hidden');
+  const txt = $('description-loading-text');
+  if (txt) txt.classList.add('hidden');
 }
 
 export function setGpsActive(active) {
