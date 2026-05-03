@@ -896,6 +896,26 @@ Plan D Stage 1 で導入した `📤` ボタン（`exportTelemetryAsJson` + `dow
 
 これは「次の出力例を見せて真似させる」teacher forcing とは違い、「前回ダメだった部分を引用して避けるべきパターンを教える」negative example の渡し方。Few-shot とも別の文脈情報。Sonnet judge が出した deductions（「桜が美しい（汎用）」）を Haiku generator にそのまま渡すという、judge → generator の情報フィードバックループの構築。
 
+## 4.14 再生成完了後の loading-text 残留バグ（2026-05-03）
+
+### 4.14.1 症状
+
+Judge NG → 再生成のフローで本文は差し替わるが、本文の上に出ていた「✏️ より良い表現に書き直しています…」のテキストだけが画面に残り続けていた。再生成成功時のみ目立つが、原因は再生成に固有ではない。
+
+### 4.14.2 原因
+
+`public/assets/ui.js` の `setDescription` が `#description-skeleton`（プレースホルダのバー）は `hidden` 化していた一方で、別要素である `#description-loading-text`（フェーズ別文言を表示する要素、`index.html:79`）には何も触れていなかった。両要素は `index.html` 上で並んでおり、初期状態では両方 `hidden`、ローディング開始時に skeleton と loading-text の両方が `hidden` 解除される。本文確定時に skeleton だけ閉じても loading-text は開いたまま、というアンバランスが原因。
+
+`setDescriptionFailed` は両方を hidden にしていたので失敗系では発症しない。`setDescription` と `clearDescription` の更新漏れ。
+
+### 4.14.3 対策
+
+`setDescription` / `clearDescription` の中で `#description-loading-text` も `hidden` にする 1 行を追加。`document.getElementById` の戻りが null のケースに備えて `if (txt)` で防御。テストは `test/ui_dom.test.js` に新設し、依存追加を避けるため `globalThis.document` を最小スタブして classList と textContent の遷移だけ検証する。
+
+### 4.14.4 教訓
+
+ローディング表示を「skeleton」と「文言テキスト」の 2 要素に分割した時点で、本文確定の出口側でも両方を閉じる責務が発生する。今回はその対応漏れ。表示状態の対称性（開く側で触る要素は閉じる側でも触る）を意識する。
+
 ---
 
 ## 5. 参考資料
