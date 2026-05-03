@@ -25,6 +25,7 @@ import { identifyMunicipality, prefetchNeighbors } from './muni.js';
 import { initMap, updateCurrentLocation, addTrackPoint, setTrack } from './map.js';
 import { startWatching } from './geo.js';
 import { generateTraceId, buildTelemetryEntry, shouldSample } from './telemetry.js';
+import { shouldEnterSwitchFlow } from './switch_flow.js';
 import {
   showPasswordScreen, showMainScreen,
   showPasswordError, clearPasswordError,
@@ -184,6 +185,11 @@ async function handlePosition({ lat, lon, speed }, password) {
   setSpeed(speed !== null && speed >= 0 ? Math.round(speed * 3.6) : null);
 
   // 地図更新 + 軌跡追加
+  // F-4: wasFirstFix を保存してから isFirstFix を倒す。
+  // 初回 fix のときは「前回と同じ市町村」でも下の切替フローに入って
+  // キャッシュ確認 → 無ければ API、という流れにしないと、
+  // 自宅（前回と同じ市町村）で起動したときに解説が出ない。
+  const wasFirstFix = isFirstFix;
   updateCurrentLocation(lat, lon, isFirstFix);
   isFirstFix = false;
   addTrackPoint(lat, lon);
@@ -193,7 +199,7 @@ async function handlePosition({ lat, lon, speed }, password) {
   const muni = await identifyMunicipality(lat, lon, currentMuniCd);
   if (!muni) return;
 
-  if (muni.code !== currentMuniCd) {
+  if (shouldEnterSwitchFlow(muni.code, currentMuniCd, wasFirstFix)) {
     // 切替
     currentMuniCd = muni.code;
     markVisited(muni.code, muni.name, muni.prefecture);
