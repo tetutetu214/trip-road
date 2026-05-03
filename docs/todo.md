@@ -188,6 +188,15 @@
 - [x] **6.5b** テレメトリ手動 export（📤 ボタン + exportTelemetryAsJson + downloadJson）削除：Plan D Stage 2 の自動 flush で全 entry が S3 に蓄積されているため不要
 - [x] `telemetry.js` の `critic_*` / `judge_passed` 拡張は 6.4c で実施済
 
+### 案 C: fetch_entries.sh 出力強化（完了 2026-05-03）
+
+- [x] 既存サマリの「最古/最新 ts_generated」表示バグ修正（bc + xargs を bash 算術展開に置換）
+- [x] Plan E 集計セクション追加：合格率 / NG 確定 / fail-open / 再生成率
+- [x] 軸別平均スコア（null 除外、小数 2 桁）
+- [x] NG 確定 entry の listing（muni_code / solar_term / 4 軸スコア / regen フラグ）
+- [x] Plan E より前の entry は has("judge_passed") でフィルタして除外
+- [x] docs/analysis/README.md に新サマリ出力例を追記
+
 ### 6.6 ドキュメント・本番反映
 
 - [ ] `docs/spec.md` に Plan E の API 仕様・プロンプト仕様・S3 スキーマ更新を追記
