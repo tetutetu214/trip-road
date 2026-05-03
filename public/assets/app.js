@@ -16,7 +16,6 @@ import {
   getVisitedCount,
   appendTelemetry,
   updateTelemetry,
-  exportTelemetryAsJson,
   getTelemetryCount,
   getTelemetryBatch,
   clearTelemetryBatch,
@@ -32,11 +31,23 @@ import {
   setMuniName, setMuniRomaji, setSpeed, setVisitedCount,
   setDescription, setDescriptionLoading, setDescriptionLoadingPhase, setDescriptionFailed, clearDescription,
   setGpsActive, setPermissionDenied,
-  downloadJson,
+  setDebugInfo,
 } from './ui.js';
 
 let currentMuniCd = null;
 let isFirstFix = true;
+
+// Plan E (6.5b): デバッグオーバーレイの状態管理
+// currentJudgeData は最後に表示した解説の判定情報を保持し、
+// ⚙️ トグル時に即時表示更新できるようにする。
+const DEBUG_LS_KEY = 'tripRoad.debug';
+const isDebugOn = () => {
+  try { return localStorage.getItem(DEBUG_LS_KEY) === '1'; } catch (_) { return false; }
+};
+const setDebugOn = (on) => {
+  try { localStorage.setItem(DEBUG_LS_KEY, on ? '1' : '0'); } catch (_) {}
+};
+let currentJudgeData = null;
 
 // === テレメトリ状態 ===
 // Plan D Stage 1: 表示中 entry の trace_id と表示開始 ms を保持し、
@@ -101,7 +112,12 @@ async function enterMainApp(password) {
     const v = state.visited[currentMuniCd];
     setMuniName(v.name);
     const cached = getCachedDescription(currentMuniCd, getSolarTerm());
-    if (cached) setDescription(cached);
+    if (cached) {
+      setDescription(cached);
+      // Plan E (6.5b): 初期表示も cached 状態としてデバッグ表示を出す
+      currentJudgeData = { cached: true };
+      setDebugInfo(currentJudgeData, isDebugOn());
+    }
   }
 
   // GPS 監視開始
@@ -116,20 +132,17 @@ async function enterMainApp(password) {
     if (document.hidden) finalizeCurrentTelemetry();
   });
 
-  // テレメトリ手動エクスポート（フッター 📤 アイコン）
-  const exportLink = document.getElementById('export-link');
-  if (exportLink) {
-    exportLink.addEventListener('click', (e) => {
+  // Plan E (6.5b): デバッグオーバーレイ表示トグル（フッター ⚙️ アイコン）
+  const debugBtn = document.getElementById('debug-toggle');
+  if (debugBtn) {
+    if (isDebugOn()) debugBtn.classList.add('debug-on');
+    debugBtn.addEventListener('click', (e) => {
       e.preventDefault();
-      finalizeCurrentTelemetry();  // 表示中 entry も含めて確定してから書出
-      const count = getTelemetryCount();
-      if (count === 0) {
-        alert('テレメトリはまだ蓄積されていません');
-        return;
-      }
-      const json = exportTelemetryAsJson();
-      const filename = `trip-road-telemetry-${new Date().toISOString().slice(0, 10)}.json`;
-      downloadJson(filename, json);
+      const next = !isDebugOn();
+      setDebugOn(next);
+      debugBtn.classList.toggle('debug-on', next);
+      // 表示も即時更新（現在の judgeData を使う）
+      setDebugInfo(currentJudgeData, next);
     });
   }
 
@@ -209,6 +222,9 @@ async function handlePosition({ lat, lon, speed }, password) {
 
     if (cached) {
       setDescription(cached);
+      // Plan E (6.5b): キャッシュヒット時はデバッグ表示も「cached」状態に更新
+      currentJudgeData = { cached: true };
+      setDebugInfo(currentJudgeData, isDebugOn());
       // キャッシュヒットも記録（読まれた事実は同じ）
       if (currentTraceId) {
         appendTelemetry(buildTelemetryEntry({
@@ -248,6 +264,15 @@ async function handlePosition({ lat, lon, speed }, password) {
           await new Promise((r) => setTimeout(r, 300));
         }
         setDescription(result.description);
+        // Plan E (6.5b): 新規生成時の判定情報をデバッグ表示用に保持
+        currentJudgeData = {
+          judge_passed: result.judge_passed,
+          judge_scores: result.judge_scores,
+          judge_deductions: result.judge_deductions,
+          regenerated: result.regenerated,
+          judge_error: result.judge_error,
+        };
+        setDebugInfo(currentJudgeData, isDebugOn());
         // 新規生成を記録（Judge スコア付き）
         if (currentTraceId) {
           appendTelemetry(buildTelemetryEntry({

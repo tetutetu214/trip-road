@@ -118,15 +118,53 @@ export function setPermissionDenied() {
   $('description-skeleton').classList.add('hidden');
 }
 
-// Plan D Stage 1: テレメトリ JSON のダウンロード（手動エクスポート）
-export function downloadJson(filename, jsonString) {
-  const blob = new Blob([jsonString], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+// Plan E (6.5b): デバッグオーバーレイの表示制御。
+// 表示内容自体の組み立ては formatDebugInfo（純粋関数）が担う。
+export function setDebugInfo(judgeData, isDebugOn) {
+  const el = $('debug-info');
+  if (!el) return;
+  if (!isDebugOn || !judgeData) {
+    el.classList.add('hidden');
+    el.textContent = '';
+    return;
+  }
+  el.classList.remove('hidden');
+  el.textContent = formatDebugInfo(judgeData);
+}
+
+/**
+ * Judge データ → デバッグ表示用の複数行テキスト（純粋関数、テスト用）。
+ *
+ * 入力 judgeData の形:
+ *   - キャッシュヒット: { cached: true }
+ *   - 新規生成 + judge fail-open: { judge_passed: null, judge_error: string|null, ... }
+ *   - 新規生成 + judge 成功: { judge_passed: bool, judge_scores: {...}, judge_deductions: {...}, regenerated: bool, judge_error: null }
+ *
+ * @param {object|null} data
+ * @returns {string}
+ */
+export function formatDebugInfo(data) {
+  if (!data) return '';
+  if (data.cached) return '[DEBUG] (cached, no judge info)';
+  if (data.judge_passed === null) {
+    return `[DEBUG] judge unavailable (fail-open)\nerror: ${data.judge_error ?? '-'}`;
+  }
+  const s = data.judge_scores ?? {};
+  const lines = [
+    `[DEBUG] judge_passed: ${data.judge_passed} (regen: ${data.regenerated ?? false})`,
+    `accuracy: ${s.accuracy ?? '-'}  specificity: ${s.specificity ?? '-'}  season_fit: ${s.season_fit ?? '-'}  density: ${s.density ?? '-'}`,
+  ];
+  const allDeductions = [];
+  if (data.judge_deductions) {
+    for (const [axis, items] of Object.entries(data.judge_deductions)) {
+      if (Array.isArray(items) && items.length > 0) {
+        items.forEach((d) => allDeductions.push(`  ${axis}: ${d}`));
+      }
+    }
+  }
+  if (allDeductions.length > 0) {
+    lines.push('deductions:');
+    lines.push(...allDeductions);
+  }
+  return lines.join('\n');
 }
