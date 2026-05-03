@@ -127,7 +127,3 @@ export function clearTelemetryBatch(traceIds) {
   saveState(state);
 }
 
-export function exportTelemetryAsJson() {
-  const t = loadState().telemetry ?? [];
-  return JSON.stringify(t, null, 2);
-}

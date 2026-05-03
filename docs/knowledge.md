@@ -543,6 +543,361 @@ Critic を組み込む方が、依存とコストの両面で最小。
 
 ---
 
+## 4.8 Plan E / Phase 6.1 Wikipedia API helper（2026-05-03）
+
+Judge 軸 1（事実正確性）の RAG 用に Wikipedia から市町村記事の intro を取得する `workers/src/wikipedia.js` を実装した。Plan E 全体（Wikipedia → Judge 4 軸 → 再生成ループ）の最初のレンガ。
+
+### 4.8.1 設計の要点
+
+- 純粋関数（`buildWikipediaUrl` / `parseWikipediaExtract` / `cleanExtract` / `resolveWikipediaTitle` / `buildCacheKey`）と副作用関数（`fetchWikipediaExtract` / `getCachedWikipediaExtract`）を明確に分離。テストは純粋関数中心、24 ケース pass
+- fetch / Cache API は引数注入で差し替え可能にしたが、Cloudflare Cache API はローカル再現が難しいので統合動作は wrangler dev / 本番で確認する方針（既存の anthropic.js も同流儀）
+- User-Agent は Wikipedia の Etiquette に従い識別可能な文字列（`trip-road/1.0 (https://github.com/tetutetu214/trip-road; tetutetu214@github)`）を必ず付ける
+- Cache TTL 30 日、キーは `https://wikipedia-cache.internal/<muni_code>` のダミー Request
+
+### 4.8.2 実 API 検証で発見した重要な落とし穴
+
+サンプル 6 市町村（相模原市・緑区・新宿区・海老名市・座間市・綾瀬市）で実 API を叩いて挙動確認した結果、2 つの重要な問題が判明：
+
+**(1) 曖昧さ回避ページ問題（致命度: 中、対応済）**
+
+「緑区」だけで検索すると `redirects=true` を付けても**曖昧さ回避ページ**にヒットし、extract として「緑区（みどりく）」のたった 8 字しか返ってこない（緑区は横浜・千葉・相模原・さいたま・名古屋に存在）。この極端に短い extract が `null` ではなく値として返ってしまうと、Sonnet judge に「Wikipedia 情報なし」とは別の「ほぼ空の extract」が渡って判定が暴れる。
+
+対策: `parseWikipediaExtract` 内で「extract に句点（`。`）を含まない場合は null とみなす」判定を追加。Wikipedia 正常記事の intro は通常句点を含むため、曖昧さ回避ページや読み仮名のみのスタブを安全にフィルタできる。
+
+**(2) 政令指定都市の区への redirect 慣習がバラバラ（致命度: 中、要追加対応）**
+
+実検証で発見：
+- **redirect あり**: `大阪市北区` → `北区 (大阪市)`、`札幌市中央区` → `中央区 (札幌市)`
+- **redirect なし**: `相模原市緑区` / `横浜市西区` → どちらも missing
+
+つまり結合形式が市ごとに動いたり動かなかったりする。Wikipedia 編集者の慣習依存。
+
+さらに、現在のフォールバック `{municipality} ({prefecture})` は「緑区 (神奈川県)」を作るが、Wikipedia 上の正式タイトルは「緑区 (相模原市)」「緑区 (横浜市)」のように **親市名カッコ付き** なので、これも missing で取れない。
+
+現状の対応：政令市の区については Wikipedia extract = null となり、Judge 軸 1 は spec.md 10.6 の通り「Wikipedia 情報なし前提で評価（保守的に高得点傾向）」となる。fail-open 動作なので致命的ではないが、軸 1 の精度は下がる。
+
+**今後の対応案（6.7 までの間に検討）**: フロントから N03_003（郡・政令市名）も送ってもらい、Worker 側で `${区} (${親市})` 形式のタイトルを構築する。spec.md API 仕様の小改訂が必要。
+
+### 4.8.3 非問題（spec.md 通り動いた箇所）
+
+- 通常市町村（海老名市・座間市・綾瀬市）：`municipality` そのままでヒット、extract 37〜84 字
+- 東京特別区（新宿区・渋谷区）：`municipality` そのままでヒット、extract 200 字程度
+- `[1]` 等の参考文献記号除去・1500 字切り詰め：cleanExtract で対応（実 intro には [n] が見当たらず、ガードとして残す）
+
+### 4.8.4 テストの組み立て上ハマったところ
+
+- `URLSearchParams.toString()` のエンコードは `encodeURIComponent` と差がある（`(` `)` を非エンコード、スペースを `+` に変換）。Wikipedia API はどちらも受理するので動作は問題ないが、テストで生 URL 文字列の expect 比較をすると壊れる。`new URLSearchParams(url.split('?')[1])` でパースしてからデコード後の値を比較する方式に統一
+
+---
+
+## 4.9 Plan E / Phase 6.2 Judge prompts 構築（2026-05-03）
+
+Sonnet 4.6 を 4 軸並列で叩くためのプロンプト構築関数群 `workers/src/judge_prompts.js` を実装した。すべて純粋関数。Phase 6.3 の judge.js で `Promise.all` で並列呼出する材料が揃った。
+
+### 4.9.1 設計の要点
+
+- 共通プリアンブル + 軸別差分 + Few-shot + 末尾「採点してください」の四段構成。`buildCommonPreamble` を共通関数にし、4 軸関数はそれを呼んで先頭に置くだけ
+- プロンプトの本文は spec.md 10.3 章のテンプレをほぼそのままハードコード。Few-shot もハードコード（カリブレーション例は頻繁に変えるものではない）
+- 出力した実プロンプトの長さは軸 1 で約 1247 文字、軸 3 で約 1027 文字。Sonnet コンテキストウィンドウに対して十分小さい
+
+### 4.9.2 SOLAR_TERM_META の二重持ち判断（重要）
+
+既存 `workers/src/anthropic.js` には `SOLAR_TERM_MAP`（番号 → 名前のみ）があり、judge 側で必要な `period`（例: 「4月5日頃〜穀雨前」）は持っていない。この設計判断で 2 案あった：
+
+- 案 A（採用）: judge 側に `SOLAR_TERM_META`（{name, period}）を新設、anthropic 側はそのまま
+- 案 B: anthropic の SOLAR_TERM_MAP を {name, period} に拡張して両者が import
+
+**案 A 採用理由**: generator 側の system prompt に period を埋め込む計画はないので、anthropic.js の SOLAR_TERM_MAP に period を持たせるのは責務違反。重複コストはマップ 24 行 × 1 ファイル分だけで、可読性のメリットが上回る。
+
+将来 generator にも period が必要になったら、共通モジュール `workers/src/solar_term.js` を切り出して両者が import する形にリファクタする。
+
+### 4.9.3 Wikipedia null 時の軸 1 プロンプト差し替え
+
+`buildFactualityPrompt` は `wikipediaExtract === null | undefined | ''` の 3 ケースで Wikipedia ブロックを差し替える：
+
+```
+【Wikipedia 抜粋】
+（情報なし。Wikipedia 抜粋が取得できなかったため、明確な事実誤認が見当たらない場合は減点しないこと。
+Wikipedia 由来の根拠を欠く記述があっても、地理常識として明らかな矛盾がない限り保守的に評価する。）
+```
+
+これは spec.md 10.6 章「Wikipedia 情報なし前提で評価（保守的に高得点傾向）」を実装に落としたもの。fail-open 動作で、政令市の区など Wikipedia が引けない市町村でも軸 1 が極端な低スコアにならないようにする狙い。
+
+Few-shot 例は null ケースでも残す（Wikipedia ありの理想例として「こういう書き方なら 5 点」のキャリブレーションは null でも有効、と判断）。
+
+### 4.9.4 実 entry を入れたプロンプトの目視確認
+
+5/3 取得テレメトリの海老名市 entry（節気=春、本文に「春には桜が淡紅色に染まり」「宿場町として栄えた」「淡紅色」など）を立夏（07）の節気でプロンプト化したところ：
+
+- 軸 3（季節整合）: 「春には桜が」が立夏（5月中旬〜下旬）と矛盾するので減点対象として認識される構造
+- 軸 4（情報密度）: 「淡紅色に染まり」「相模野では新鮮な野菜」など情緒修飾と汎用フレーズが Few-shot 例 B と類似、低スコア検出見込み
+
+Plan E の必要性が実プロンプトレベルで裏付けられた。
+
+---
+
+## 4.10 Plan E / Phase 6.3 Judge 統合（2026-05-03）
+
+4 軸並列 Judge + スコア集約 + 文字数判定 + fail-open のメインフロー `workers/src/judge.js` を実装。Phase 6.4 で `/api/describe` から `judgeAll` を呼び出すための材料が揃った。
+
+### 4.10.1 公開 API
+
+- `parseJudgeResponse(text)`: Sonnet 出力 → `{score, deductions, notes}` 抽出（純粋関数）
+- `aggregateScores(judgments)`: 4 軸結果 → `{passed, scores, deductions}` 集約（純粋関数）
+- `callJudge(axis, params, env, fetchFn?, sleepFn?)`: 1 軸を Sonnet に投げる + リトライ + パース
+- `judgeAll({...})`: 文字数 → Wikipedia → 4 軸並列 → 集約
+
+### 4.10.2 callJudge / judgeAll もテスト対象に含めた判断
+
+6.1 / 6.2 の流儀（fetch を直接叩く関数は手動 wrangler 確認、純粋関数だけテスト）を 6.3 では一部破った。理由：
+- 文字数早期リターン・並列呼出・aggregate ロジック・fail-open の 4 種類の分岐が同居しており、純粋関数だけのテストでは結合動作が保証できない
+- `fetchFn` / `wikipediaFetcher` / `judgeRunner` / `sleepFn` を引数注入できる設計にすればモック差し替えだけで結合テストが書ける（外部 I/O ゼロで高速）
+- `judgeRunner` を引数で受け取る形にしておくと、judgeAll 単体では callJudge を呼ばずに任意のスコアを返すスタブで挙動確認できる → 軸ごとのスコアパターンを網羅しやすい
+
+### 4.10.3 Sonnet レスポンス JSON の抽出戦略
+
+プロンプトで「JSON のみ出力」と指示しても、Sonnet は前後に説明文を付けてくる癖がある。`parseJudgeResponse` は `\{[\s\S]*\}` で最初の `{...}` ブロックを正規表現で抽出してから `JSON.parse` する。これで以下が安全に処理できる：
+
+- 「はい、評価します。\n{...}\n以上です。」のような前後の挨拶
+- 不正 JSON（trailing comma 等）→ catch して null
+- スキーマ不正（score なし、score が範囲外、deductions が配列でない、notes が文字列でない）→ null
+
+null を返した軸は `aggregateScores` で fail-open に倒される（passed=null）。
+
+### 4.10.4 リトライ戦略
+
+429（レート制限）と 5xx（サーバ側障害）のときだけ 1 回だけ指数バックオフ 1 秒リトライ。429 で `Retry-After` ヘッダがあればそれを優先する案も検討したが、実装シンプルさを優先して固定 1 秒に統一（後で必要になったら拡張）。
+
+400/401/403 等の 4xx（429 以外）は何度リトライしても無駄なので即 fail-open。
+
+テストでは `sleepFn` を引数注入で即時 resolve に差し替えており、リトライ込みのテストでも遅延ゼロ。
+
+### 4.10.5 Sonnet モデル ID は日付なしエイリアス採用
+
+`JUDGE_MODEL = 'claude-sonnet-4-6'`。日付付き snapshot（claude-sonnet-4-6-20XXXXXX）は公式ドキュメントに記載がなく、エイリアス使用が推奨されている（Anthropic API ドキュメントで確認）。
+
+エイリアスは新しい snapshot がリリースされたとき自動的に切り替わるリスクがあるが、Sonnet は generator (Haiku) と違い judge 専用なので、新版で評価が変わってもキャッシュ汚染にはつながらない（むしろ評価精度向上が期待できる）。本番で挙動が荒れたら snapshot 固定に切り替える。
+
+### 4.10.6 文字数判定で早期リターンする理由
+
+文字数 NG（120 未満 or 180 超）が出た時点で他軸を呼ばずに `passed=false, lengthOk=false` で即返す。これにより：
+- Sonnet API コール 4 回（軸 1〜4）の Anthropic 課金が完全にゼロ
+- レイテンシも Wikipedia 取得を待たずに即返し
+- 文字数 NG は generator プロンプトの調整で潰す範疇なので、判定軸として独立に扱う
+
+ちなみにテスト初版で SAMPLE description が 84 字（120 字未満）になっており、judgeAll の主要 3 ケースが全部 lengthOk=false で早期リターンしてしまうバグを踏んだ。文字数を Node で実測しながら 121 字に調整して解決。
+
+---
+
+## 4.11 Plan E / Phase 6.4 /api/describe への Judge 統合（2026-05-03）
+
+生成 → judge → NG なら 1 回だけ再生成 → 集約レスポンス のメインフローを Workers の `/api/describe` に組み込み、フロント側で judge_passed を見てキャッシュ判断するアーキテクチャに移行した。
+
+### 4.11.1 重要な実装前の発見：spec.md 10.5 と現状実装の齟齬
+
+実装着手時に **spec.md 10.5「Workers 側でキャッシュ書込」が現状実装と乖離**していることを発見。
+
+実態:
+- Workers にはキャッシュ層（KV / Cache API）が**ない**
+- キャッシュは `public/assets/storage.js` の localStorage（`setCachedDescription`）が**単一の真実**
+- フロント `app.js` がキャッシュをチェックしてミス時だけ Workers を呼ぶ（つまり Workers は「呼ばれた時点で必ず Anthropic を叩く」設計）
+
+判断: spec.md 10.5 を実態に合わせて文言修正（6.4a として独立コミット）。Workers にキャッシュ層を増やす案も検討したが、PoC スケール（利用者 1 人、iPhone 1 台専用）で恩恵ゼロ + 二重キャッシュ管理になるので却下。
+
+### 4.11.2 describe_flow.js を index.js から切り出した判断
+
+`generateAndJudge` を `workers/src/describe_flow.js` に新ファイルで切り出し。`index.js` 内に置く案もあったが：
+
+- `index.js` は 112 行の純粋なルーター + auth + glue で、既存テストなし
+- 新しいロジック（生成 → judge → 再生成ループ）を index.js に混入すると責務肥大、テストも書きにくい
+- describe_flow.js なら describe_flow.test.js で `generator` / `judger` を引数注入してモック可能、外部 I/O ゼロで全分岐検証
+
+結果: 6 ケースの統合テストが軽量に書けた（1回合格 / 1回NG→2回合格 / 2回NG / fail-open / 再生成エラー / 1回目生成エラー）。
+
+### 4.11.3 fail-open 時に再生成しない判断
+
+`judge1.passed === null`（Sonnet 障害）のとき、再生成を試みず生成出力をそのまま返す設計。
+
+理由:
+- Sonnet が落ちた状態で再生成しても、再 judge も同じく fail-open になるので意味がない
+- Haiku 出力をそのまま表示する方がコストもレイテンシも節約できる
+- ユーザには judge 失敗を伝えない（spec.md 10.4 / 10.7 通り）
+
+代替案として「fail-open 時は generator 出力を信頼して passed=true 扱いでキャッシュに書く」もあったが、Sonnet が一時的に落ちている隙に低品質出力がキャッシュ汚染するリスクがあるので却下。fail-open 時はキャッシュ書込もスキップ（次回 Sonnet 復活後に再評価のチャンスを残す）。
+
+### 4.11.4 再生成エラー時の regenerated フィールドの意味論
+
+「2 回目生成（Haiku 再呼出）が ok=false の場合に regenerated を true / false どちらにするか」を悩んだ。
+
+採用: **false**（1 回目を採用したことを示す）
+
+意味論として「regenerated=採用された生成試行が 2 回目だったか」と定義した。
+
+- ✅ 1 回目 NG → 2 回目合格 → `regenerated=true`（採用は 2 回目）
+- ✅ 1 回目 NG → 2 回目 NG → `regenerated=true`（採用は 2 回目、判定は false）
+- ✅ 1 回目 NG → 2 回目生成エラー → `regenerated=false`（採用は 1 回目、judge_passed は 1 回目の値を維持）
+- ✅ 1 回目合格 → そのまま採用 → `regenerated=false`
+
+これにより S3 集計で `regenerated=true` を「再生成試行が成功したケース」として一意にカウントできる。
+
+### 4.11.5 deductions も Workers レスポンス + テレメトリに含めた判断
+
+spec.md 10.5 のレスポンス例には `judge_scores` だけで `judge_deductions` がなかった。実装上は judgeAll の結果に既に deductions が入っているので、レスポンス + テレメトリに含めるかどうか選択肢があった。
+
+採用: **含める**
+
+理由:
+- 分析の主目的の 1 つが「汎用フレーズ・情緒修飾の実例を見ること」で、deductions の引用文がそのまま実例
+- レスポンスサイズ追加は 1 entry あたり数百〜数千字（誤差）
+- S3 PUT のレイテンシ・コスト面で無視できる
+- 後で「やっぱり要る」と気づいて足し直すコストの方が高い
+
+採用された judge 試行の deductions を返す（`regenerated=true` なら 2 回目の deductions、それ以外は 1 回目）。
+
+### 4.11.6 フロントのキャッシュ書込判断ロジック（最重要）
+
+`public/assets/app.js` の変更が Plan E の本質的な防御線：
+
+```js
+if (result.ok) {
+  // judge_passed===true のときだけキャッシュに書く
+  if (result.judge_passed === true) {
+    setCachedDescription(muni.code, solarTerm, result.description);
+  }
+  setDescription(result.description);  // 表示は常に行う
+  ...
+}
+```
+
+判断表:
+
+| judge_passed | 表示 | localStorage 書込 | 次回同じ市町村 |
+|---|---|---|---|
+| `true` | する | する | キャッシュヒット、Workers 呼ばず |
+| `false`（NG 確定）| する | しない | 再度 Workers を呼んで生成し直す |
+| `null`（fail-open）| する | しない | 同上、Sonnet 復活後に再評価のチャンス |
+
+これで「誤情報が一度入ると同じキーが来るたびに半永久的に表示し続ける」キャッシュ汚染問題（plan.md 10.1 で挙げた致命的問題）が構造的に防がれる。
+
+### 4.11.7 テレメトリ entry スキーマ移行：critic_meaningfulness 廃止
+
+Plan D 構想時の `critic_meaningfulness`（意味性）フィールドを `buildTelemetryEntry` から削除（spec.md 10.6 廃止フィールド）。Plan E では「意味性」という抽象軸ではなく、より具体的な 4 軸（accuracy / specificity / season_fit / density）に分解したため。
+
+過去 entry（4.29 までの 8 件 + 5/3 取得分）には `critic_meaningfulness: null` が残っているが、分析時は欠損フィールドとして許容する（spec.md 10.6 の「後方互換」方針）。
+
+---
+
+## 4.12 Plan E / Phase 6.5 フロント UI 段階表示 + デバッグオーバーレイ（2026-05-03）
+
+### 4.12.1 段階表示 UI（6.5a）
+
+ローディング中の文言を経過時間で切り替え、Plan E の評価・再生成フェーズが進行していることをユーザに伝える。spec.md 10.7 通り：
+
+- 0〜2 秒「📡 土地のたよりを生成中…」
+- 2〜5 秒「✓ 内容を確認しています…」
+- 5 秒〜「✏️ より良い表現に書き直しています…」
+- regenerated=true 時、表示直前に 0.3 秒だけ「✏️」を残す演出
+
+**spec.md からの設計修正**: spec.md 10.7 は「`api.js` に setTimeout を仕込む」と書いていたが、UI 描画は ui.js の責務なので `setDescriptionLoadingPhase` を ui.js 側に持たせ、api.js は文字列 phase を発火するだけに分離。`fetchDescription(password, req, { onPhaseChange })` の opts 引数として配線。
+
+### 4.12.2 タイマーリーク防止
+
+api.js の `fetchDescription` に setTimeout で仕掛けたタイマーは、以下のすべてのパスで必ずクリアする：
+- 200 OK レスポンス到着時
+- 401 / 400 エラーレスポンス到着時
+- 全リトライ終了時（最後の lastError return 直前）
+
+これを怠ると、画面遷移後にも文言が更新されてバグの温床になる。
+
+### 4.12.3 デバッグオーバーレイ（6.5b、案 A 採用）
+
+判定情報（judge_passed / scores / deductions / regenerated / fail-open）を実機で確認できるよう、フッターに ⚙️ トグルを追加。
+
+- デフォルト OFF、`localStorage` キー `tripRoad.debug` で永続化
+- ON のとき description の直下にモノスペースのデバッグペイン表示
+- 「設定画面」のような大袈裟な構成は作らず、フッターアイコンのトグル 1 つで完結
+
+**最初は「画面右上 5 連タップで表示」ジェスチャを提案したが、てつてつから「誤作動の可能性、ボタン置けばいい」と却下。明示的な ⚙️ ボタンに切り替え**（隠しジェスチャ過剰の典型例）。
+
+### 4.12.4 テレメトリ手動 export（📤）の削除
+
+Plan D Stage 1 で導入した `📤` ボタン（`exportTelemetryAsJson` + `downloadJson`）を削除。
+
+- Stage 2 で全 entry が自動で S3 に flush される実装になった時点で、ローカル JSON への手動書き出しは情報の重複でしかない
+- 削除対象: `public/index.html` の `#export-link`、`storage.js` の `exportTelemetryAsJson`、`ui.js` の `downloadJson`、`app.js` のクリックハンドラ
+- 「念のため残しておく」誘惑を退け、本当に不要になった機能は完全に消す方針
+
+### 4.12.5 currentJudgeData グローバル変数
+
+デバッグ表示は ⚙️ トグル時に「現在表示中の解説の判定情報」を即時更新する必要があるため、`app.js` に `currentJudgeData` グローバル変数を持たせている。3 つのタイミングで更新：
+
+- 初期表示時のキャッシュヒット → `{ cached: true }`
+- handlePosition 内のキャッシュヒット → `{ cached: true }`
+- 新規生成成功時 → `{ judge_passed, judge_scores, judge_deductions, regenerated, judge_error }`
+
+グローバル変数を増やすのは本来避けたいが、UI トグルと描画状態を切り離す副作用としてここは許容（同じ理由で currentTraceId / currentDisplayStartMs も既にグローバル）。
+
+---
+
+## 4.13 Plan E / Phase 6.4d 再生成時のフィードバック注入（2026-05-03）
+
+### 4.13.1 発見した穴
+
+6.4 までの実装では、judge passed=false のときの 2 回目生成が **1 回目とまったく同じ messagesReq** で呼ばれていた。Haiku に「前回どこで NG になったか」を一切伝えていない状態。確率論的にしか改善せず、同じ失敗を繰り返す可能性が高い。spec.md にもこの再生成時のフィードバック機構は当初書かれていなかった。
+
+てつてつから「精度が悪い場合、何が悪いかを LLM に伝えて新たに回答を生成してもらえるで OK ですか？何もなしで答えさせても、また失敗すると思うのですが」という指摘で発見。
+
+### 4.13.2 対策
+
+`workers/src/describe_flow.js` に `formatDeductionsForFeedback(deductions)` 純粋関数を追加。judge1 の deductions（軸ごとの引用減点根拠）を箇条書きテキストに整形する：
+
+```
+- 事実正確性:
+  ・江戸期の城下町（記載なし）
+- 具体性:
+  ・桜が美しい（汎用）
+- 情報密度:
+  ・淡紅色に染まり（情緒）
+```
+
+これを `buildMessagesRequest({ ..., regenerationFeedback })` の引数として渡し、user メッセージ末尾に「前回の出力で校閲から指摘された箇所」セクション + 「上記の指摘を踏まえ書き直してください」指示を追加する。
+
+### 4.13.3 設計判断
+
+| 項目 | 判断 | 理由 |
+|---|---|---|
+| 注入先 | user メッセージ末尾 | system prompt は generator 自身の指針なので不変、再生成時の追加指示は user 側 |
+| `formatDeductionsForFeedback` の責務 | 純粋関数として独立 | テスト容易、将来 feedback 表現を変えやすい |
+| 全軸 deductions ゼロのとき | feedback 空文字 → 注入しない | 文字数 NG だけで passed=false になったケース等で意味のないセクションを足さない |
+| 1 回目の generator 呼出 | feedback なし | 1 回目はそもそも前回が存在しない、プレーンな messagesReq で呼ぶ |
+| 軸ラベル | 日本語（「事実正確性」「具体性」等） | Haiku は日本語生成タスクなので軸名も日本語の方が文脈一致 |
+| 未知の軸キー（mystery_axis 等） | 生キーをそのまま label として使う | 防御的、将来軸が増えても落ちない |
+
+### 4.13.4 検証で得た user メッセージの完成形
+
+```
+都道府県: 神奈川県
+市区町村: 相模原市緑区
+二十四節気: 清明（05）
+
+[前回の出力で校閲から指摘された箇所]
+- 具体性:
+  ・桜が美しい（汎用）
+  ・自然豊かな景観（汎用）
+- 情報密度:
+  ・淡紅色に染まり（情緒）
+
+上記の指摘を踏まえ、固有名詞を具体的にし、情緒修飾を避け、事実陳述で書き直してください。
+```
+
+これで Haiku は「前回どの語句が問題だったか」を引用付きで知った状態で再生成できるので、同じ失敗を繰り返す確率が大幅に下がる（はず）。実走の S3 集計（fetch_entries.sh の Plan E サマリ）で「再生成 → 合格」率を観測して効果を測る。
+
+### 4.13.5 注意：teacher forcing ではない
+
+これは「次の出力例を見せて真似させる」teacher forcing とは違い、「前回ダメだった部分を引用して避けるべきパターンを教える」negative example の渡し方。Few-shot とも別の文脈情報。Sonnet judge が出した deductions（「桜が美しい（汎用）」）を Haiku generator にそのまま渡すという、judge → generator の情報フィードバックループの構築。
+
+---
+
 ## 5. 参考資料
 
 ### 5.1 使用データ・API

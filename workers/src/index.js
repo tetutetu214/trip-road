@@ -1,10 +1,7 @@
 import { timingSafeEqual } from './auth.js';
 import { corsHeaders, handlePreflight } from './cors.js';
-import {
-  parseDescribeRequest,
-  buildMessagesRequest,
-  callAnthropic,
-} from './anthropic.js';
+import { parseDescribeRequest } from './anthropic.js';
+import { generateAndJudge } from './describe_flow.js';
 import { putToS3, generateS3Key } from './aws.js';
 
 /**
@@ -93,16 +90,27 @@ export default {
         return jsonResponse({ error: 'bad_request', detail: parsed.error }, 400, allowedOrigin);
       }
 
-      const messagesRequest = buildMessagesRequest(parsed.value);
-      const result = await callAnthropic(messagesRequest, env.ANTHROPIC_API_KEY);
-      if (!result.ok) {
+      // Plan E (6.4): 生成 → judge → NG なら 1 回再生成 → 集約レスポンス
+      const flow = await generateAndJudge(parsed.value, env);
+      if (!flow.ok) {
         return jsonResponse(
-          { error: 'upstream_error', detail: result.detail },
-          result.status >= 500 && result.status < 600 ? 502 : result.status,
+          { error: 'upstream_error', detail: flow.detail },
+          flow.status >= 500 && flow.status < 600 ? 502 : flow.status,
           allowedOrigin,
         );
       }
-      return jsonResponse({ description: result.description }, 200, allowedOrigin);
+      return jsonResponse(
+        {
+          description: flow.description,
+          judge_passed: flow.judge_passed,
+          judge_scores: flow.judge_scores,
+          judge_deductions: flow.judge_deductions,
+          regenerated: flow.regenerated,
+          judge_error: flow.judge_error,
+        },
+        200,
+        allowedOrigin,
+      );
     }
 
     // 4. それ以外は 404

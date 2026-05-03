@@ -77,11 +77,27 @@ export function parseDescribeRequest(body) {
 /**
  * Anthropic Messages API にそのまま POST できる JSON を組み立てる。
  *
- * @param {{prefecture: string, municipality: string, solar_term: string}} req
+ * Plan E (Phase 6.4d) で `regenerationFeedback` 引数を追加。
+ * 1 回目 NG で再生成するときに、judge の指摘事項を user メッセージに添えて
+ * 「同じ失敗を繰り返させない」よう Haiku に文脈を渡す。
+ * system prompt（generator 自身の指針）は変更せず、再生成時の追加指示は
+ * user メッセージ側にのみ載せる方針（責務分離）。
+ *
+ * @param {object} req
+ * @param {string} req.prefecture
+ * @param {string} req.municipality
+ * @param {string} req.solar_term
+ * @param {string} [req.regenerationFeedback] - 整形済みの指摘テキスト（空文字/null/undefined は無視）
  * @returns {object} Messages API request body
  */
 export function buildMessagesRequest(req) {
   const solarTermJa = solarTermToJa(req.solar_term);
+  let userContent = `都道府県: ${req.prefecture}\n市区町村: ${req.municipality}\n二十四節気: ${solarTermJa}（${req.solar_term}）`;
+
+  if (typeof req.regenerationFeedback === 'string' && req.regenerationFeedback.length > 0) {
+    userContent += `\n\n[前回の出力で校閲から指摘された箇所]\n${req.regenerationFeedback}\n\n上記の指摘を踏まえ、固有名詞を具体的にし、情緒修飾を避け、事実陳述で書き直してください。`;
+  }
+
   return {
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 400,
@@ -89,7 +105,7 @@ export function buildMessagesRequest(req) {
     messages: [
       {
         role: 'user',
-        content: `都道府県: ${req.prefecture}\n市区町村: ${req.municipality}\n二十四節気: ${solarTermJa}（${req.solar_term}）`,
+        content: userContent,
       },
     ],
   };

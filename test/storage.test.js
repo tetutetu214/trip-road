@@ -14,7 +14,6 @@ import {
   getTelemetryBatch,
   getTelemetryCount,
   clearTelemetryBatch,
-  exportTelemetryAsJson,
 } from '../public/assets/storage.js';
 
 // localStorage のメモリモック
@@ -121,11 +120,4 @@ describe('telemetry helpers', () => {
     expect(getTelemetryBatch(10)[0].trace_id).toBe('b');
   });
 
-  it('exportTelemetryAsJson で全 entry を JSON 文字列で取得', () => {
-    appendTelemetry({ trace_id: 'a', muni_code: '11210' });
-    const json = exportTelemetryAsJson();
-    const parsed = JSON.parse(json);
-    expect(parsed).toHaveLength(1);
-    expect(parsed[0].trace_id).toBe('a');
-  });
 });

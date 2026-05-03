@@ -43,6 +43,38 @@ claude.ai or Anthropic API に渡す。プロンプトは 3 種：
 プロンプト 2 の出力を見て、`workers/src/anthropic.js` の system prompt を直接編集 →
 `wrangler deploy` で反映。しばらく実走したあと、再度 fetch して改善前後を比較する。
 
+## fetch_entries.sh のサマリ出力（Plan E 以降）
+
+スクリプト末尾で以下を表示する。Plan E 以降の entry（`judge_passed` フィールドを
+持つもの）が 1 件でもあれば「Plan E Judge 集計」セクションが出る。
+
+```
+=== サマリ ===
+最古 ts_generated: 2026-04-26 09:00:27
+最新 ts_generated: 2026-05-04 18:30:11
+市町村数: 12
+
+=== Plan E Judge 集計（対象: N 件、6.4 以降の entry のみ）===
+  合格 (passed=true):     X/N (XX%)
+  NG 確定 (false):         X/N (XX%)
+  fail-open (null):        X/N (XX%)
+  再生成発生 (regen=true): X/N (XX%)
+
+  軸別平均スコア（null 除外、小数2桁）:
+    accuracy: 4.83
+    specificity: 3.67
+    season_fit: 4.92
+    density: 3.50
+
+  NG 確定 entry 一覧（要 prompts.md で要因分析）:
+    14215 [05] acc=5 spec=2 season=5 dens=3 regen=true
+    14216 [05] acc=4 spec=3 season=5 dens=2 regen=true
+```
+
+これだけ見れば「prompt 修正が効いているか」「どの軸が弱いか」が一目で分かる。
+詳細な要因分析（汎用フレーズの具体例、prompt 改善案）はそのまま `prompts.md` の
+テンプレで Claude に投げる従来フローを継続。
+
 ## 設計判断のメモ
 
 - 当初は Athena で SQL 集計する設計だったが、月 100 件規模の個人 PoC では
