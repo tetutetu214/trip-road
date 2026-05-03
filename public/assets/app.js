@@ -30,7 +30,7 @@ import {
   showPasswordScreen, showMainScreen,
   showPasswordError, clearPasswordError,
   setMuniName, setMuniRomaji, setSpeed, setVisitedCount,
-  setDescription, setDescriptionLoading, setDescriptionFailed, clearDescription,
+  setDescription, setDescriptionLoading, setDescriptionLoadingPhase, setDescriptionFailed, clearDescription,
   setGpsActive, setPermissionDenied,
   downloadJson,
 } from './ui.js';
@@ -223,17 +223,29 @@ async function handlePosition({ lat, lon, speed }, password) {
       }
     } else {
       setDescriptionLoading();
-      const result = await fetchDescription(password, {
-        prefecture: muni.prefecture,
-        municipality: muni.name,
-        solar_term: solarTerm,
-      });
+      const result = await fetchDescription(
+        password,
+        {
+          prefecture: muni.prefecture,
+          municipality: muni.name,
+          solar_term: solarTerm,
+        },
+        {
+          // Plan E (6.5): 経過時間で「生成中」→「確認中」→「書き直し中」に文言切替
+          onPhaseChange: (phase) => setDescriptionLoadingPhase(phase),
+        },
+      );
       if (result.ok) {
         // Plan E (6.4): judge_passed===true のときだけキャッシュに書く。
         // false（NG）or null（fail-open）は表示はするが localStorage には書かない
         // → 次回同じ市町村に来たら再度 Workers を呼んで生成し直す
         if (result.judge_passed === true) {
           setCachedDescription(muni.code, solarTerm, result.description);
+        }
+        // Plan E (6.5): regenerated=true のときは表示直前に 0.3 秒だけ「✏️」を残す（演出）
+        if (result.regenerated === true) {
+          setDescriptionLoadingPhase('regenerating');
+          await new Promise((r) => setTimeout(r, 300));
         }
         setDescription(result.description);
         // 新規生成を記録（Judge スコア付き）

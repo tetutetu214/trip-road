@@ -50,12 +50,43 @@ export function setDescription(text) {
 export function setDescriptionLoading() {
   $('description').textContent = '';
   $('description-skeleton').classList.remove('hidden');
+  setDescriptionLoadingPhase('generating');
 }
 export function setDescriptionFailed() {
   $('description-skeleton').classList.add('hidden');
+  const txt = $('description-loading-text');
+  if (txt) txt.classList.add('hidden');
   const body = $('description');
   body.classList.add('muted');
   body.textContent = '解説を取得できませんでした';
+}
+
+/**
+ * Plan E (6.5): ローディング中の文言を経過時間に応じて切り替える。
+ *
+ * @param {'generating'|'judging'|'regenerating'} phase
+ */
+export function setDescriptionLoadingPhase(phase) {
+  const el = $('description-loading-text');
+  if (!el) return;
+  el.classList.remove('hidden');
+  el.textContent = phaseToText(phase);
+}
+
+/**
+ * phase 文字列 → 表示文言（純粋関数、テスト用）。
+ * 不明な phase は空文字（既定値）。
+ *
+ * @param {string} phase
+ * @returns {string}
+ */
+export function phaseToText(phase) {
+  switch (phase) {
+    case 'generating': return '📡 土地のたよりを生成中…';
+    case 'judging': return '✓ 内容を確認しています…';
+    case 'regenerating': return '✏️ より良い表現に書き直しています…';
+    default: return '';
+  }
 }
 export function clearDescription() {
   $('description').textContent = '';

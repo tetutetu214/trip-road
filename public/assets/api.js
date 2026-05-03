@@ -14,9 +14,16 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
  * judge_deductions / regenerated / judge_error が含まれるようになった。
  * ここではそれらをそのまま戻り値に乗せ、判定ロジックは呼び出し側（app.js）が担う。
  *
+ * Plan E (Phase 6.5) で onPhaseChange コールバック対応。
+ * 経過時間 2 秒 / 5 秒のタイミングで呼び出され、UI 文言の段階表示に使う。
+ *
  * @param {string} password - X-App-Password に送る値
  * @param {{prefecture: string, municipality: string, solar_term: string}} req
  *   solar_term は二十四節気の番号文字列（'01'〜'24'）
+ * @param {object} [opts]
+ * @param {(phase: 'judging'|'regenerating') => void} [opts.onPhaseChange]
+ *   2 秒経過で 'judging'、5 秒経過で 'regenerating' を発火。
+ *   レスポンス到着で内部タイマーをクリア（クリア後は呼ばない）。
  * @returns {Promise<
  *   | {ok: true, description: string, judge_passed: boolean|null,
  *      judge_scores: object|null, judge_deductions: object|null,
@@ -24,8 +31,24 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
  *   | {ok: false, status: number, error: string}
  * >}
  */
-export async function fetchDescription(password, req) {
+export async function fetchDescription(password, req, opts = {}) {
+  const { onPhaseChange } = opts;
   let lastError = { ok: false, status: 0, error: 'unknown' };
+
+  // 段階表示タイマー：fetch 開始から経過時間で文言を切り替える
+  // タイマーは fetch 完了 / エラー / 全リトライ終了で必ずクリア
+  const timers = [];
+  const startTimers = () => {
+    if (typeof onPhaseChange !== 'function') return;
+    timers.push(setTimeout(() => onPhaseChange('judging'), 2000));
+    timers.push(setTimeout(() => onPhaseChange('regenerating'), 5000));
+  };
+  const clearTimers = () => {
+    timers.forEach(clearTimeout);
+    timers.length = 0;
+  };
+
+  startTimers();
 
   for (let attempt = 0; attempt < RETRY_DELAYS_MS.length + 1; attempt++) {
     try {
@@ -39,15 +62,18 @@ export async function fetchDescription(password, req) {
       });
 
       if (res.status === 401) {
+        clearTimers();
         return { ok: false, status: 401, error: 'unauthorized' };
       }
       if (res.status === 400) {
+        clearTimers();
         const data = await res.json().catch(() => ({}));
         return { ok: false, status: 400, error: data.detail ?? 'bad_request' };
       }
       if (res.ok) {
         const data = await res.json();
         if (data?.description) {
+          clearTimers();
           return {
             ok: true,
             description: data.description,
@@ -72,6 +98,7 @@ export async function fetchDescription(password, req) {
     }
   }
 
+  clearTimers();
   return lastError;
 }
 

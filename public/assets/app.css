@@ -317,6 +317,14 @@ body {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 0.8; }
 }
+/* Plan E (6.5): スケルトン下に出るローディング段階表示の文言 */
+.tayori-loading-text {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  letter-spacing: 0.04em;
+  font-feature-settings: 'palt';
+}
 
 .footer-row {
   display: flex;
