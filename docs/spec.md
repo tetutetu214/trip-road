@@ -882,6 +882,36 @@ async function judgeAll({ description, prefecture, municipality, solarTerm, env 
 - `passed === true` → キャッシュ書込
 - `passed === false` → 再生成へ（上限 2 回）
 
+#### 再生成時のフィードバック注入（Phase 6.4d 追加）
+
+`passed === false` で 2 回目を生成するとき、判定 1 回目の `deductions` を Haiku の user メッセージに添えて「同じ失敗を繰り返さない」ようにする。何も伝えずに同じ messagesReq で再生成しても、Haiku は前回どこを指摘されたか知らないため確率論的にしか改善しない。
+
+**フォーマット**: `workers/src/describe_flow.js` の `formatDeductionsForFeedback(deductions)` で軸ごとにラベル付きの箇条書きに整形：
+
+```
+- 事実正確性:
+  ・江戸期の城下町（記載なし）
+- 具体性:
+  ・桜が美しい（汎用）
+  ・自然豊かな景観（汎用）
+- 情報密度:
+  ・淡紅色に染まり（情緒）
+```
+
+これを `buildMessagesRequest({ ..., regenerationFeedback })` の引数として渡し、user メッセージの末尾に以下のセクションが追加される：
+
+```
+[前回の出力で校閲から指摘された箇所]
+{整形済 deductions}
+
+上記の指摘を踏まえ、固有名詞を具体的にし、情緒修飾を避け、事実陳述で書き直してください。
+```
+
+**設計判断**:
+- system prompt（generator 自身の指針）は変更しない。再生成時の追加指示は user メッセージ側にのみ載せる
+- judge1 の deductions が全軸ゼロの場合（passed=false が文字数 NG だけだったケース等）は feedback 空文字、注入されない
+- 1 回目の生成では feedback なし（プレーンな messagesReq）
+
 ### 10.5 `/api/describe` の拡張
 
 #### リクエスト

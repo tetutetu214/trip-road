@@ -11,6 +11,41 @@
 import { buildMessagesRequest, callAnthropic } from './anthropic.js';
 import { judgeAll } from './judge.js';
 
+// 軸キー → 日本語ラベル（feedback テキスト用）
+const AXIS_LABELS = {
+  accuracy: '事実正確性',
+  specificity: '具体性',
+  season_fit: '季節整合',
+  density: '情報密度',
+};
+
+/**
+ * judge の deductions オブジェクトを Haiku 用のフィードバックテキストに整形（純粋関数）。
+ *
+ * 入力: { accuracy: [...], specificity: ['桜が美しい（汎用）', ...], season_fit: [], density: [...] }
+ * 出力（例）:
+ *   - 具体性:
+ *     ・桜が美しい（汎用）
+ *   - 情報密度:
+ *     ・淡紅色に染まり（情緒）
+ *
+ * 全軸の deductions が空 / 入力が null のときは空文字を返す（呼び出し側 anthropic.js が無視）。
+ *
+ * @param {object|null|undefined} deductions
+ * @returns {string}
+ */
+export function formatDeductionsForFeedback(deductions) {
+  if (!deductions || typeof deductions !== 'object') return '';
+  const lines = [];
+  for (const [axis, items] of Object.entries(deductions)) {
+    if (Array.isArray(items) && items.length > 0) {
+      lines.push(`- ${AXIS_LABELS[axis] ?? axis}:`);
+      items.forEach((d) => lines.push(`  ・${d}`));
+    }
+  }
+  return lines.join('\n');
+}
+
 /**
  * 生成 + Judge + 1 回までの再生成 を実行し、レスポンス用の集約結果を返す。
  *
@@ -83,8 +118,12 @@ export async function generateAndJudge(parsed, env, deps = {}) {
     };
   }
 
-  // passed=false: 1 回だけ再生成
-  const gen2 = await generator(messagesReq, env.ANTHROPIC_API_KEY);
+  // passed=false: 1 回だけ再生成。
+  // Plan E (6.4d): judge1 の deductions を整形して generator に渡し、
+  // 「同じ失敗を繰り返さない」よう Haiku に文脈を伝える。
+  const feedback = formatDeductionsForFeedback(judge1.deductions);
+  const messagesReq2 = buildMessagesRequest({ ...parsed, regenerationFeedback: feedback });
+  const gen2 = await generator(messagesReq2, env.ANTHROPIC_API_KEY);
   if (!gen2.ok) {
     // 再生成エラー → 1 回目を返す（採用試行は 1 回のままなので regenerated=false）
     return {

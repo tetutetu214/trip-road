@@ -197,6 +197,15 @@
 - [x] Plan E より前の entry は has("judge_passed") でフィルタして除外
 - [x] docs/analysis/README.md に新サマリ出力例を追記
 
+### 6.4d 再生成時のフィードバック注入（完了 2026-05-03）
+
+- [x] `workers/src/anthropic.js`: `buildMessagesRequest` に optional `regenerationFeedback` 引数追加（user メッセージ末尾に「前回校閲指摘」セクション + 書き直し指示）
+- [x] `workers/src/describe_flow.js`: `formatDeductionsForFeedback(deductions)` 純粋関数追加。2 回目生成時に judge1 deductions を渡す
+- [x] `workers/test/anthropic.test.js`: feedback あり/なし/空/null の 3 ケース追加
+- [x] `workers/test/describe_flow.test.js`: 「2 回目生成の messagesReq に feedback が含まれる」検証 + `formatDeductionsForFeedback` 純粋関数の 5 ケース
+- [x] `docs/spec.md` 10.4 章に「再生成時のフィードバック注入」仕様追記
+- [x] `docs/knowledge.md` 4.13 章に発見の経緯と設計判断を記録
+
 ### 6.6 ドキュメント・本番反映
 
 - [ ] `docs/spec.md` に Plan E の API 仕様・プロンプト仕様・S3 スキーマ更新を追記

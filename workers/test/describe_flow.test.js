@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateAndJudge } from '../src/describe_flow.js';
+import { generateAndJudge, formatDeductionsForFeedback } from '../src/describe_flow.js';
 
 const PARSED = {
   prefecture: '神奈川県',
@@ -173,5 +173,102 @@ describe('generateAndJudge', () => {
     expect(result.ok).toBe(false);
     expect(result.status).toBe(502);
     expect(result.detail).toContain('haiku down');
+  });
+
+  it('Plan E (6.4d): 1 回目 NG → 2 回目生成の messagesReq に judge1 deductions が feedback として含まれる', async () => {
+    const judge1Deductions = {
+      accuracy: [],
+      specificity: ['桜が美しい（汎用）', '自然豊かな景観（汎用）'],
+      season_fit: [],
+      density: ['淡紅色に染まり（情緒）'],
+    };
+    const generatorCalls = [];
+    const generator = async (messagesReq) => {
+      generatorCalls.push(messagesReq);
+      const idx = generatorCalls.length;
+      return {
+        ok: true,
+        description: idx === 1 ? SAMPLE_DESC_1 : SAMPLE_DESC_2,
+      };
+    };
+    const judger = makeJudger([
+      { passed: false, lengthOk: true, scores: FAILING_SCORES, deductions: judge1Deductions, error: null },
+      { passed: true, lengthOk: true, scores: PASSING_SCORES, deductions: {}, error: null },
+    ]);
+
+    const result = await generateAndJudge(PARSED, ENV, { generator, judger });
+
+    expect(result.ok).toBe(true);
+    expect(result.regenerated).toBe(true);
+    expect(generatorCalls).toHaveLength(2);
+
+    // 1 回目はフィードバックなし（プレーンな user content）
+    expect(generatorCalls[0].messages[0].content).not.toContain('指摘');
+
+    // 2 回目は judge1 の deductions が feedback として含まれている
+    const secondUserContent = generatorCalls[1].messages[0].content;
+    expect(secondUserContent).toContain('指摘');
+    expect(secondUserContent).toContain('桜が美しい（汎用）');
+    expect(secondUserContent).toContain('自然豊かな景観（汎用）');
+    expect(secondUserContent).toContain('淡紅色に染まり（情緒）');
+    expect(secondUserContent).toMatch(/書き直し|書き直/);
+  });
+});
+
+describe('formatDeductionsForFeedback', () => {
+  it('null / undefined / 空オブジェクトは空文字', () => {
+    expect(formatDeductionsForFeedback(null)).toBe('');
+    expect(formatDeductionsForFeedback(undefined)).toBe('');
+    expect(formatDeductionsForFeedback({})).toBe('');
+  });
+
+  it('全軸の配列が空でも空文字（注入しない）', () => {
+    expect(
+      formatDeductionsForFeedback({
+        accuracy: [],
+        specificity: [],
+        season_fit: [],
+        density: [],
+      }),
+    ).toBe('');
+  });
+
+  it('1 軸だけ減点ありなら、その軸のラベルと項目が出る', () => {
+    const text = formatDeductionsForFeedback({
+      accuracy: [],
+      specificity: ['桜が美しい（汎用）'],
+      season_fit: [],
+      density: [],
+    });
+    expect(text).toContain('具体性');
+    expect(text).toContain('・桜が美しい（汎用）');
+    expect(text).not.toContain('事実正確性');
+    expect(text).not.toContain('情報密度');
+  });
+
+  it('複数軸 + 複数項目を箇条書きで列挙', () => {
+    const text = formatDeductionsForFeedback({
+      accuracy: ['江戸期の城下町（記載なし）'],
+      specificity: ['桜が美しい（汎用）', '自然豊かな景観（汎用）'],
+      season_fit: [],
+      density: ['淡紅色に染まり（情緒）'],
+    });
+    expect(text).toContain('事実正確性');
+    expect(text).toContain('・江戸期の城下町（記載なし）');
+    expect(text).toContain('具体性');
+    expect(text).toContain('・桜が美しい（汎用）');
+    expect(text).toContain('・自然豊かな景観（汎用）');
+    expect(text).toContain('情報密度');
+    expect(text).toContain('・淡紅色に染まり（情緒）');
+    // 季節整合は減点ゼロなのでラベルが出ない
+    expect(text).not.toContain('季節整合');
+  });
+
+  it('未知のキーが混入しても落ちない（生キーをラベルとして使う）', () => {
+    const text = formatDeductionsForFeedback({
+      mystery_axis: ['unknown deduction'],
+    });
+    expect(text).toContain('mystery_axis');
+    expect(text).toContain('・unknown deduction');
   });
 });

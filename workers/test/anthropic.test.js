@@ -103,4 +103,43 @@ describe('buildMessagesRequest', () => {
     expect(req.messages[0].content).toContain('冬至');
     expect(req.messages[0].content).toContain('22');
   });
+
+  it('regenerationFeedback なしの場合、user content に「指摘」セクションは含まれない', () => {
+    const req = buildMessagesRequest({
+      prefecture: '神奈川県',
+      municipality: '相模原市緑区',
+      solar_term: '05',
+    });
+    expect(req.messages[0].content).not.toContain('指摘');
+    expect(req.messages[0].content).not.toContain('書き直し');
+  });
+
+  it('regenerationFeedback ありの場合、user content に「前回校閲指摘」セクション + 書き直し指示が入る', () => {
+    const feedback =
+      '- 具体性:\n  ・桜が美しい（汎用）\n- 情報密度:\n  ・淡紅色に染まり（情緒）';
+    const req = buildMessagesRequest({
+      prefecture: '神奈川県',
+      municipality: '相模原市緑区',
+      solar_term: '05',
+      regenerationFeedback: feedback,
+    });
+    expect(req.messages[0].content).toContain('前回');
+    expect(req.messages[0].content).toContain('指摘');
+    expect(req.messages[0].content).toContain('桜が美しい（汎用）');
+    expect(req.messages[0].content).toContain('淡紅色に染まり（情緒）');
+    // 「書き直し」指示が含まれる
+    expect(req.messages[0].content).toMatch(/書き直し|書き直/);
+  });
+
+  it('regenerationFeedback が空文字 / null / undefined の場合は注入しない（防御的）', () => {
+    for (const fb of ['', null, undefined]) {
+      const req = buildMessagesRequest({
+        prefecture: '神奈川県',
+        municipality: '相模原市緑区',
+        solar_term: '05',
+        regenerationFeedback: fb,
+      });
+      expect(req.messages[0].content).not.toContain('指摘');
+    }
+  });
 });
