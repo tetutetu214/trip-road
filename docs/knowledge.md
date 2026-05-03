@@ -636,6 +636,59 @@ Plan E の必要性が実プロンプトレベルで裏付けられた。
 
 ---
 
+## 4.10 Plan E / Phase 6.3 Judge 統合（2026-05-03）
+
+4 軸並列 Judge + スコア集約 + 文字数判定 + fail-open のメインフロー `workers/src/judge.js` を実装。Phase 6.4 で `/api/describe` から `judgeAll` を呼び出すための材料が揃った。
+
+### 4.10.1 公開 API
+
+- `parseJudgeResponse(text)`: Sonnet 出力 → `{score, deductions, notes}` 抽出（純粋関数）
+- `aggregateScores(judgments)`: 4 軸結果 → `{passed, scores, deductions}` 集約（純粋関数）
+- `callJudge(axis, params, env, fetchFn?, sleepFn?)`: 1 軸を Sonnet に投げる + リトライ + パース
+- `judgeAll({...})`: 文字数 → Wikipedia → 4 軸並列 → 集約
+
+### 4.10.2 callJudge / judgeAll もテスト対象に含めた判断
+
+6.1 / 6.2 の流儀（fetch を直接叩く関数は手動 wrangler 確認、純粋関数だけテスト）を 6.3 では一部破った。理由：
+- 文字数早期リターン・並列呼出・aggregate ロジック・fail-open の 4 種類の分岐が同居しており、純粋関数だけのテストでは結合動作が保証できない
+- `fetchFn` / `wikipediaFetcher` / `judgeRunner` / `sleepFn` を引数注入できる設計にすればモック差し替えだけで結合テストが書ける（外部 I/O ゼロで高速）
+- `judgeRunner` を引数で受け取る形にしておくと、judgeAll 単体では callJudge を呼ばずに任意のスコアを返すスタブで挙動確認できる → 軸ごとのスコアパターンを網羅しやすい
+
+### 4.10.3 Sonnet レスポンス JSON の抽出戦略
+
+プロンプトで「JSON のみ出力」と指示しても、Sonnet は前後に説明文を付けてくる癖がある。`parseJudgeResponse` は `\{[\s\S]*\}` で最初の `{...}` ブロックを正規表現で抽出してから `JSON.parse` する。これで以下が安全に処理できる：
+
+- 「はい、評価します。\n{...}\n以上です。」のような前後の挨拶
+- 不正 JSON（trailing comma 等）→ catch して null
+- スキーマ不正（score なし、score が範囲外、deductions が配列でない、notes が文字列でない）→ null
+
+null を返した軸は `aggregateScores` で fail-open に倒される（passed=null）。
+
+### 4.10.4 リトライ戦略
+
+429（レート制限）と 5xx（サーバ側障害）のときだけ 1 回だけ指数バックオフ 1 秒リトライ。429 で `Retry-After` ヘッダがあればそれを優先する案も検討したが、実装シンプルさを優先して固定 1 秒に統一（後で必要になったら拡張）。
+
+400/401/403 等の 4xx（429 以外）は何度リトライしても無駄なので即 fail-open。
+
+テストでは `sleepFn` を引数注入で即時 resolve に差し替えており、リトライ込みのテストでも遅延ゼロ。
+
+### 4.10.5 Sonnet モデル ID は日付なしエイリアス採用
+
+`JUDGE_MODEL = 'claude-sonnet-4-6'`。日付付き snapshot（claude-sonnet-4-6-20XXXXXX）は公式ドキュメントに記載がなく、エイリアス使用が推奨されている（Anthropic API ドキュメントで確認）。
+
+エイリアスは新しい snapshot がリリースされたとき自動的に切り替わるリスクがあるが、Sonnet は generator (Haiku) と違い judge 専用なので、新版で評価が変わってもキャッシュ汚染にはつながらない（むしろ評価精度向上が期待できる）。本番で挙動が荒れたら snapshot 固定に切り替える。
+
+### 4.10.6 文字数判定で早期リターンする理由
+
+文字数 NG（120 未満 or 180 超）が出た時点で他軸を呼ばずに `passed=false, lengthOk=false` で即返す。これにより：
+- Sonnet API コール 4 回（軸 1〜4）の Anthropic 課金が完全にゼロ
+- レイテンシも Wikipedia 取得を待たずに即返し
+- 文字数 NG は generator プロンプトの調整で潰す範疇なので、判定軸として独立に扱う
+
+ちなみにテスト初版で SAMPLE description が 84 字（120 字未満）になっており、judgeAll の主要 3 ケースが全部 lengthOk=false で早期リターンしてしまうバグを踏んだ。文字数を Node で実測しながら 121 字に調整して解決。
+
+---
+
 ## 5. 参考資料
 
 ### 5.1 使用データ・API

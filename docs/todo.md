@@ -1,6 +1,6 @@
 # trip-road タスク一覧
 
-**最終更新**: 2026-05-03（6.2 完了）
+**最終更新**: 2026-05-03（6.3 完了）
 
 ---
 
@@ -155,13 +155,16 @@
 - [x] `SOLAR_TERM_META`（番号 → name + period の 24 個マッピング）を新設（既存 `anthropic.js` の SOLAR_TERM_MAP は generator 用なので分離）
 - [x] 単体テスト 13 ケース（`workers/test/judge_prompts.test.js`、全 pass）
 
-### 6.3 Judge 統合
+### 6.3 Judge 統合（完了 2026-05-03）
 
-- [ ] `workers/src/judge.js`: 4 軸を並列で Sonnet 4.6 に投げ、結果集約
-- [ ] 文字数機械判定（120〜180 字、外れたら即 NG）
-- [ ] 合格条件: LLM 軸全 4 点以上 + 文字数 OK
-- [ ] Judge 自体エラー時の `null` 返却（fail-open フラグ）
-- [ ] 単体テスト（モック Anthropic API）
+- [x] `workers/src/judge.js`: 4 軸を並列で Sonnet 4.6 に投げ、結果集約（`Promise.all`）
+- [x] 文字数機械判定（120〜180 字、外れたら即 NG、他軸を呼ばずに早期リターン）
+- [x] 合格条件: LLM 軸全 4 点以上 + 文字数 OK
+- [x] Judge 自体エラー時の `null` 返却（fail-open フラグ、`passed=null, error=msg`）
+- [x] HTTP 429 / 5xx は 1 回だけ指数バックオフ 1 秒リトライ（spec.md 10.8）
+- [x] Sonnet レスポンス JSON 抽出（前後に説明文付き対応の正規表現マッチ）
+- [x] 単体テスト 19 ケース（`workers/test/judge.test.js`、全 pass、`fetchFn`/`wikipediaFetcher`/`judgeRunner`/`sleepFn` を引数注入してモック）
+- [x] モデル ID `claude-sonnet-4-6`（公式エイリアス推奨を確認）
 
 ### 6.4 `/api/explain` への組込
 
