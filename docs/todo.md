@@ -1,6 +1,6 @@
 # trip-road タスク一覧
 
-**最終更新**: 2026-05-03（6.4 完了）
+**最終更新**: 2026-05-03（6.5 完了）
 
 ---
 
@@ -177,12 +177,16 @@
 - [x] **6.4c** フロント `app.js` で `judge_passed===true` のときだけ `setCachedDescription` を呼ぶ判断ロジック
 - [x] **6.4c** フロント `telemetry.js` の buildTelemetryEntry スキーマを spec.md 10.6 に合わせ更新（critic_meaningfulness 廃止、critic_specificity / critic_season_fit / critic_deductions / judge_passed / regenerated / judge_error 追加）
 
-### 6.5 フロント UI 演出
+### 6.5 フロント UI 演出（完了 2026-05-03）
 
-- [ ] `api.js`: judge レスポンスのハンドリング
-- [ ] `app.js`: 段階表示（生成中→確認中→（NG時）書き直し中→完成）
-- [ ] CSS: ローディングインジケータ
-- [ ] `telemetry.js`: `critic_*` および `judge_passed` フィールドを S3 に流す
+- [x] **6.5a** `api.js`: fetchDescription に opts.onPhaseChange 引数追加（2 秒 / 5 秒タイマー、必ずクリア）
+- [x] **6.5a** `app.js`: 段階表示（生成中→確認中→書き直し中）の配線、regenerated=true 時の 0.3 秒「✏️」演出
+- [x] **6.5a** `ui.js`: setDescriptionLoadingPhase + phaseToText（純粋関数、4 ケーステスト）
+- [x] **6.5a** CSS: `.tayori-loading-text` のスタイル追加
+- [x] **6.5b** デバッグオーバーレイ：フッター ⚙️ トグル、setDebugInfo + formatDebugInfo、localStorage `tripRoad.debug` で永続化
+- [x] **6.5b** `formatDebugInfo` 純粋関数の 6 ケーステスト
+- [x] **6.5b** テレメトリ手動 export（📤 ボタン + exportTelemetryAsJson + downloadJson）削除：Plan D Stage 2 の自動 flush で全 entry が S3 に蓄積されているため不要
+- [x] `telemetry.js` の `critic_*` / `judge_passed` 拡張は 6.4c で実施済
 
 ### 6.6 ドキュメント・本番反映
 

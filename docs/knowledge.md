@@ -787,6 +787,58 @@ Plan D 構想時の `critic_meaningfulness`（意味性）フィールドを `bu
 
 ---
 
+## 4.12 Plan E / Phase 6.5 フロント UI 段階表示 + デバッグオーバーレイ（2026-05-03）
+
+### 4.12.1 段階表示 UI（6.5a）
+
+ローディング中の文言を経過時間で切り替え、Plan E の評価・再生成フェーズが進行していることをユーザに伝える。spec.md 10.7 通り：
+
+- 0〜2 秒「📡 土地のたよりを生成中…」
+- 2〜5 秒「✓ 内容を確認しています…」
+- 5 秒〜「✏️ より良い表現に書き直しています…」
+- regenerated=true 時、表示直前に 0.3 秒だけ「✏️」を残す演出
+
+**spec.md からの設計修正**: spec.md 10.7 は「`api.js` に setTimeout を仕込む」と書いていたが、UI 描画は ui.js の責務なので `setDescriptionLoadingPhase` を ui.js 側に持たせ、api.js は文字列 phase を発火するだけに分離。`fetchDescription(password, req, { onPhaseChange })` の opts 引数として配線。
+
+### 4.12.2 タイマーリーク防止
+
+api.js の `fetchDescription` に setTimeout で仕掛けたタイマーは、以下のすべてのパスで必ずクリアする：
+- 200 OK レスポンス到着時
+- 401 / 400 エラーレスポンス到着時
+- 全リトライ終了時（最後の lastError return 直前）
+
+これを怠ると、画面遷移後にも文言が更新されてバグの温床になる。
+
+### 4.12.3 デバッグオーバーレイ（6.5b、案 A 採用）
+
+判定情報（judge_passed / scores / deductions / regenerated / fail-open）を実機で確認できるよう、フッターに ⚙️ トグルを追加。
+
+- デフォルト OFF、`localStorage` キー `tripRoad.debug` で永続化
+- ON のとき description の直下にモノスペースのデバッグペイン表示
+- 「設定画面」のような大袈裟な構成は作らず、フッターアイコンのトグル 1 つで完結
+
+**最初は「画面右上 5 連タップで表示」ジェスチャを提案したが、てつてつから「誤作動の可能性、ボタン置けばいい」と却下。明示的な ⚙️ ボタンに切り替え**（隠しジェスチャ過剰の典型例）。
+
+### 4.12.4 テレメトリ手動 export（📤）の削除
+
+Plan D Stage 1 で導入した `📤` ボタン（`exportTelemetryAsJson` + `downloadJson`）を削除。
+
+- Stage 2 で全 entry が自動で S3 に flush される実装になった時点で、ローカル JSON への手動書き出しは情報の重複でしかない
+- 削除対象: `public/index.html` の `#export-link`、`storage.js` の `exportTelemetryAsJson`、`ui.js` の `downloadJson`、`app.js` のクリックハンドラ
+- 「念のため残しておく」誘惑を退け、本当に不要になった機能は完全に消す方針
+
+### 4.12.5 currentJudgeData グローバル変数
+
+デバッグ表示は ⚙️ トグル時に「現在表示中の解説の判定情報」を即時更新する必要があるため、`app.js` に `currentJudgeData` グローバル変数を持たせている。3 つのタイミングで更新：
+
+- 初期表示時のキャッシュヒット → `{ cached: true }`
+- handlePosition 内のキャッシュヒット → `{ cached: true }`
+- 新規生成成功時 → `{ judge_passed, judge_scores, judge_deductions, regenerated, judge_error }`
+
+グローバル変数を増やすのは本来避けたいが、UI トグルと描画状態を切り離す副作用としてここは許容（同じ理由で currentTraceId / currentDisplayStartMs も既にグローバル）。
+
+---
+
 ## 5. 参考資料
 
 ### 5.1 使用データ・API
