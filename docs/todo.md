@@ -1,6 +1,6 @@
 # trip-road タスク一覧
 
-**最終更新**: 2026-05-03（6.6 完了、PR #30 マージ済）
+**最終更新**: 2026-05-03（Plan E 全完了、本番反映済、Plan F 計画追加）
 
 ---
 
@@ -206,29 +206,54 @@
 - [x] `docs/spec.md` 10.4 章に「再生成時のフィードバック注入」仕様追記
 - [x] `docs/knowledge.md` 4.13 章に発見の経緯と設計判断を記録
 
-### 6.6 ドキュメント・本番反映
+### 6.6 ドキュメント整備（完了 2026-05-03）
 
 - [x] `docs/spec.md` に Plan E の API 仕様・プロンプト仕様・S3 スキーマ更新を追記（10.1〜10.8）
 - [x] `docs/knowledge.md` 4.8〜4.13 章として設計判断・実装ハマりどころを記録
 - [x] `CLAUDE.md` に Sonnet 4.6 / Wikipedia API / S3 / aws4fetch を技術スタックへ追記、参考リンクに Wikipedia API + Cloudflare Cache API 追加
-- [ ] Workers `wrangler deploy` で本番反映（6.7）
-- [ ] 翌日実走で S3 に `judge_passed` / スコアが正しく入ることを確認（6.7）
+
+### 6.7 本番反映 + 動作確認（完了 2026-05-03）
+
+- [x] Workers `wrangler deploy` で本番反映（trip-road-api、Version `ef63ded5`）
+- [x] Pages `wrangler pages deploy` で本番反映（trip-road、独自ドメインで HTTP 200 確認）
+- [x] 401 確認（パスワードなし → unauthorized）
+- [x] 認証付き curl で Plan E レスポンス確認（4 軸スコア・deductions・regenerated 全フィールド到達確認、Sonnet 4.6 + Wikipedia API 到達確認、約 9-15 秒のレイテンシで spec.md 想定通り）
+- [x] 相模原市南区で軸 1 の事実検証が機能（「茶畑」「古淵駅中心」「江戸期の河岸」を Wikipedia 不在として正しく減点）
+- [ ] **翌日実走（人間タスク）**: iPhone 実機で `https://trip-road.tetutetu214.com/` を開いて GPS 移動、市町村切替時の段階表示・⚙️ デバッグオーバーレイ動作確認、翌日 `bash docs/analysis/fetch_entries.sh` で Plan E 集計が出ることを確認
 
 ---
 
-## 将来的な改善（Plan F 以降）
+## Plan F: Plan E 完成度向上 + 観測強化
 
-- [ ] 道の駅の近隣表示（進行方向 ±60°、1200駅データ）
-- [ ] GPXエクスポート
-- [ ] オフライン対応（Service Worker）
-- [ ] React + Vite 移行
-- [ ] Web 検索 API（Brave 等）による多源グラウンディング（Wikipedia の補完）
-- [ ] 既存キャッシュの遡及評価・無効化スクリプト（運用で必要になった時点で）
-- [ ] Judge スコアと dwell_ms 等の満足度シグナルの相関分析
-- [ ] 境界振動対策
+詳細は `docs/plan.md` 第 11 章。
+
+### F-1（最高優先）: Plan E 補完
+
+実走 1 週間程度で `fetch_entries.sh` の Plan E 集計を観察してから、各サブ項目の優先度を実データで決める。
+
+- [ ] **F-1.1 政令市の区対応**: フロント `muni.js` から N03_003（親市名）を抽出して Worker に送信、`workers/src/wikipedia.js` で `${区} (${親市})` 形式の Wikipedia title を構築（spec.md API 仕様改訂を伴う）
+- [ ] **F-1.2 文字数遵守率改善**: `workers/src/anthropic.js` の system prompt を強化（120〜180 字の中央値 150 字を目標、要素を絞ってでも下限を割らない指示）。実走 S3 集計で「文字数 NG 率」を観測しながら調整
+- [ ] **F-1.3 Haiku 知識限界対策**: F-1.1 / F-1.2 後も判定スコアが上がらない場合、Wikipedia 抜粋を Haiku の system / user prompt にも参考情報として渡す（generator にも RAG）か検討
+
+### F-2（中優先、データが溜まってから）: 観測強化
+
+- [ ] **F-2.1 Judge スコアと dwell_ms の相関分析**: `docs/analysis/prompts.md` に分析プロンプト追加 + `fetch_entries.sh` の集計に「judge_passed=true / false で dwell_ms 平均が有意差あるか」を追加
+- [ ] **F-2.2 既存キャッシュの遡及評価・無効化スクリプト**: 運用で必要になった時点で
+
+### F-3（低優先、随時）: ユーザー機能拡張
+
+- [ ] **F-3.1 解説の「再生成」ボタン**: ユーザが「いまいち」と感じたとき明示的に再生成、`force_regenerate=true` で Workers がキャッシュ無視
+- [ ] **F-3.2 道の駅の近隣表示**: 進行方向 ±60°、1200 駅データ（実装規模大、独立 PR 推奨）
+- [ ] **F-3.3 GPX エクスポート**: 軌跡データを GPX 形式でダウンロード（実装規模小）
+
+### さらに先（無時系列、検討候補）
+
+- [ ] Service Worker によるオフライン対応
 - [ ] Android Chrome 対応テスト
+- [ ] React + Vite 移行
+- [ ] Web 検索 API（Brave / Google）による Wikipedia 補完
+- [ ] 境界振動対策（市町村境界での生成頻発防止）
 - [ ] 本格アイコンデザイン
-- [ ] 解説の「再生成」ボタン
-- [ ] 軌跡のlocalStorage トリム戦略
+- [ ] 軌跡の localStorage トリム戦略
 - [ ] `download_n03.sh` の最終 `ls` を動的に（MLIT の zip 構造変更への備え）
 - [ ] `build_adjacency.py` の入力 0 件時の防御的 early return
