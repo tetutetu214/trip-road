@@ -912,7 +912,14 @@ async function judgeAll({ description, prefecture, municipality, solarTerm, env 
 
 #### キャッシュ条件
 
-Workers 側で `judge_passed === true` のときのみ `{muni_code}_{solar_term}` をキーにキャッシュ書込。それ以外（`false` または fail-open `null`）はキャッシュしない。
+キャッシュ層はフロント側 localStorage（`public/assets/storage.js` の `setCachedDescription`）が単一の真実。Workers 側にキャッシュ層は持たない（毎回 Anthropic + Judge を呼ぶ設計、ただし呼ばれるのはフロントでキャッシュミスした時だけ）。
+
+フロント `app.js` は Workers のレスポンス `judge_passed` を見て以下の通り判断する：
+
+- `judge_passed === true` のときのみ `{muni_code}_{solar_term}` をキーに `setCachedDescription` で localStorage に書く
+- `judge_passed === false`（NG）または `null`（fail-open）のときは表示はするが localStorage には書かない（次回同じ市町村に来たら再度 Workers を呼ぶ）
+
+これにより、誤情報が一度入ると同じキーが来るたびに半永久的に表示し続けるキャッシュ汚染（plan.md 10.1 で挙げた致命的問題）を防ぐ。
 
 #### エラー応答
 
