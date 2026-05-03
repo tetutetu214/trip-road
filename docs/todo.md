@@ -1,6 +1,6 @@
 # trip-road タスク一覧
 
-**最終更新**: 2026-05-03
+**最終更新**: 2026-05-03（6.2 完了）
 
 ---
 
@@ -143,15 +143,17 @@
 - [x] 単体テスト（純粋関数 24 ケース、`workers/test/wikipedia.test.js`、全 pass）
 - [ ] **持ち越し**: 政令市の区への完全対応（フロントが N03_003 親市名も送る → Worker で `${区} (${親市})` 形式の title を作る）。6.7 までの間に検討
 
-### 6.2 Judge prompts（4 軸別）
+### 6.2 Judge prompts（4 軸別、完了 2026-05-03）
 
-- [ ] `workers/src/judge_prompts.js`: 事実正確性 prompt（Wikipedia 抜粋を埋込、根拠なき記述を引用列挙）
-- [ ] 同: 具体性 prompt（固有名詞の含有度合いを評価、汎用フレーズを引用列挙）
-- [ ] 同: 季節整合 prompt（二十四節気と矛盾する記述を引用列挙）
-- [ ] 同: 情報密度 prompt（情緒修飾に字数を取られていないか・事実が淡々と伝わっているかを評価）
-- [ ] 各 prompt に Few-shot キャリブレーション例（3 点 / 5 点を 1 件ずつ）
-- [ ] 各 prompt に校閲者ロール + 「先に減点根拠引用、点数最後」のCoT 指示
-- [ ] スキーマ: `{ score: number, deductions: string[], notes: string }`
+- [x] `workers/src/judge_prompts.js`: 事実正確性 prompt（Wikipedia 抜粋を埋込、根拠なき記述を引用列挙、null 時は「情報なし」差し替え + 保守的評価指示）
+- [x] 同: 具体性 prompt（固有名詞の含有度合いを評価、汎用フレーズを引用列挙）
+- [x] 同: 季節整合 prompt（二十四節気の name + period を埋込、矛盾する記述を引用列挙）
+- [x] 同: 情報密度 prompt（情緒修飾に字数を取られていないか・事実が淡々と伝わっているかを評価）
+- [x] 各 prompt に Few-shot キャリブレーション例（5 点 / 2 点 or 1 点を 1 件ずつ）
+- [x] 各 prompt に校閲者ロール + 「先に減点根拠引用、点数最後」の CoT 指示
+- [x] 出力スキーマ: `{ score: number, deductions: string[], notes: string }` をプリアンブルで明示
+- [x] `SOLAR_TERM_META`（番号 → name + period の 24 個マッピング）を新設（既存 `anthropic.js` の SOLAR_TERM_MAP は generator 用なので分離）
+- [x] 単体テスト 13 ケース（`workers/test/judge_prompts.test.js`、全 pass）
 
 ### 6.3 Judge 統合
 
