@@ -689,6 +689,104 @@ null を返した軸は `aggregateScores` で fail-open に倒される（passed
 
 ---
 
+## 4.11 Plan E / Phase 6.4 /api/describe への Judge 統合（2026-05-03）
+
+生成 → judge → NG なら 1 回だけ再生成 → 集約レスポンス のメインフローを Workers の `/api/describe` に組み込み、フロント側で judge_passed を見てキャッシュ判断するアーキテクチャに移行した。
+
+### 4.11.1 重要な実装前の発見：spec.md 10.5 と現状実装の齟齬
+
+実装着手時に **spec.md 10.5「Workers 側でキャッシュ書込」が現状実装と乖離**していることを発見。
+
+実態:
+- Workers にはキャッシュ層（KV / Cache API）が**ない**
+- キャッシュは `public/assets/storage.js` の localStorage（`setCachedDescription`）が**単一の真実**
+- フロント `app.js` がキャッシュをチェックしてミス時だけ Workers を呼ぶ（つまり Workers は「呼ばれた時点で必ず Anthropic を叩く」設計）
+
+判断: spec.md 10.5 を実態に合わせて文言修正（6.4a として独立コミット）。Workers にキャッシュ層を増やす案も検討したが、PoC スケール（利用者 1 人、iPhone 1 台専用）で恩恵ゼロ + 二重キャッシュ管理になるので却下。
+
+### 4.11.2 describe_flow.js を index.js から切り出した判断
+
+`generateAndJudge` を `workers/src/describe_flow.js` に新ファイルで切り出し。`index.js` 内に置く案もあったが：
+
+- `index.js` は 112 行の純粋なルーター + auth + glue で、既存テストなし
+- 新しいロジック（生成 → judge → 再生成ループ）を index.js に混入すると責務肥大、テストも書きにくい
+- describe_flow.js なら describe_flow.test.js で `generator` / `judger` を引数注入してモック可能、外部 I/O ゼロで全分岐検証
+
+結果: 6 ケースの統合テストが軽量に書けた（1回合格 / 1回NG→2回合格 / 2回NG / fail-open / 再生成エラー / 1回目生成エラー）。
+
+### 4.11.3 fail-open 時に再生成しない判断
+
+`judge1.passed === null`（Sonnet 障害）のとき、再生成を試みず生成出力をそのまま返す設計。
+
+理由:
+- Sonnet が落ちた状態で再生成しても、再 judge も同じく fail-open になるので意味がない
+- Haiku 出力をそのまま表示する方がコストもレイテンシも節約できる
+- ユーザには judge 失敗を伝えない（spec.md 10.4 / 10.7 通り）
+
+代替案として「fail-open 時は generator 出力を信頼して passed=true 扱いでキャッシュに書く」もあったが、Sonnet が一時的に落ちている隙に低品質出力がキャッシュ汚染するリスクがあるので却下。fail-open 時はキャッシュ書込もスキップ（次回 Sonnet 復活後に再評価のチャンスを残す）。
+
+### 4.11.4 再生成エラー時の regenerated フィールドの意味論
+
+「2 回目生成（Haiku 再呼出）が ok=false の場合に regenerated を true / false どちらにするか」を悩んだ。
+
+採用: **false**（1 回目を採用したことを示す）
+
+意味論として「regenerated=採用された生成試行が 2 回目だったか」と定義した。
+
+- ✅ 1 回目 NG → 2 回目合格 → `regenerated=true`（採用は 2 回目）
+- ✅ 1 回目 NG → 2 回目 NG → `regenerated=true`（採用は 2 回目、判定は false）
+- ✅ 1 回目 NG → 2 回目生成エラー → `regenerated=false`（採用は 1 回目、judge_passed は 1 回目の値を維持）
+- ✅ 1 回目合格 → そのまま採用 → `regenerated=false`
+
+これにより S3 集計で `regenerated=true` を「再生成試行が成功したケース」として一意にカウントできる。
+
+### 4.11.5 deductions も Workers レスポンス + テレメトリに含めた判断
+
+spec.md 10.5 のレスポンス例には `judge_scores` だけで `judge_deductions` がなかった。実装上は judgeAll の結果に既に deductions が入っているので、レスポンス + テレメトリに含めるかどうか選択肢があった。
+
+採用: **含める**
+
+理由:
+- 分析の主目的の 1 つが「汎用フレーズ・情緒修飾の実例を見ること」で、deductions の引用文がそのまま実例
+- レスポンスサイズ追加は 1 entry あたり数百〜数千字（誤差）
+- S3 PUT のレイテンシ・コスト面で無視できる
+- 後で「やっぱり要る」と気づいて足し直すコストの方が高い
+
+採用された judge 試行の deductions を返す（`regenerated=true` なら 2 回目の deductions、それ以外は 1 回目）。
+
+### 4.11.6 フロントのキャッシュ書込判断ロジック（最重要）
+
+`public/assets/app.js` の変更が Plan E の本質的な防御線：
+
+```js
+if (result.ok) {
+  // judge_passed===true のときだけキャッシュに書く
+  if (result.judge_passed === true) {
+    setCachedDescription(muni.code, solarTerm, result.description);
+  }
+  setDescription(result.description);  // 表示は常に行う
+  ...
+}
+```
+
+判断表:
+
+| judge_passed | 表示 | localStorage 書込 | 次回同じ市町村 |
+|---|---|---|---|
+| `true` | する | する | キャッシュヒット、Workers 呼ばず |
+| `false`（NG 確定）| する | しない | 再度 Workers を呼んで生成し直す |
+| `null`（fail-open）| する | しない | 同上、Sonnet 復活後に再評価のチャンス |
+
+これで「誤情報が一度入ると同じキーが来るたびに半永久的に表示し続ける」キャッシュ汚染問題（plan.md 10.1 で挙げた致命的問題）が構造的に防がれる。
+
+### 4.11.7 テレメトリ entry スキーマ移行：critic_meaningfulness 廃止
+
+Plan D 構想時の `critic_meaningfulness`（意味性）フィールドを `buildTelemetryEntry` から削除（spec.md 10.6 廃止フィールド）。Plan E では「意味性」という抽象軸ではなく、より具体的な 4 軸（accuracy / specificity / season_fit / density）に分解したため。
+
+過去 entry（4.29 までの 8 件 + 5/3 取得分）には `critic_meaningfulness: null` が残っているが、分析時は欠損フィールドとして許容する（spec.md 10.6 の「後方互換」方針）。
+
+---
+
 ## 5. 参考資料
 
 ### 5.1 使用データ・API

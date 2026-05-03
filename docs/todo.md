@@ -1,6 +1,6 @@
 # trip-road タスク一覧
 
-**最終更新**: 2026-05-03（6.3 完了）
+**最終更新**: 2026-05-03（6.4 完了）
 
 ---
 
@@ -166,13 +166,16 @@
 - [x] 単体テスト 19 ケース（`workers/test/judge.test.js`、全 pass、`fetchFn`/`wikipediaFetcher`/`judgeRunner`/`sleepFn` を引数注入してモック）
 - [x] モデル ID `claude-sonnet-4-6`（公式エイリアス推奨を確認）
 
-### 6.4 `/api/explain` への組込
+### 6.4 `/api/describe` への組込（完了 2026-05-03）
 
-- [ ] 生成 → judge → NG なら 1 回だけ再生成 → 再 judge → 打ち切り
-- [ ] `judge_passed: true` のみキャッシュ書込
-- [ ] Judge エラー時（fail-open）はキャッシュなしで生成出力をそのまま返す
-- [ ] レスポンスに `judge_passed` / `judge_scores` / `regenerated` フィールド追加
-- [ ] 統合テスト（生成1回合格 / 1回NG→2回合格 / 2回NG / Judge障害）
+- [x] **6.4a** spec.md 10.5 のキャッシュ条件を実態（フロント localStorage が単一の真実）に合わせて修正
+- [x] **6.4b** `workers/src/describe_flow.js` 新設: 生成 → judge → NG なら 1 回だけ再生成 → 集約レスポンス
+- [x] **6.4b** Judge エラー時（fail-open）は再生成しない、生成出力をそのまま返す
+- [x] **6.4b** `workers/src/index.js` の /api/describe ハンドラを describe_flow 経由に変更、レスポンスに judge_passed / judge_scores / judge_deductions / regenerated / judge_error 追加
+- [x] **6.4b** 統合テスト 6 ケース（1回合格 / 1回NG→2回合格 / 2回NG / fail-open / 再生成エラー / 1回目生成エラー）
+- [x] **6.4c** フロント `api.js` の fetchDescription 戻り値を Plan E フィールドで拡張
+- [x] **6.4c** フロント `app.js` で `judge_passed===true` のときだけ `setCachedDescription` を呼ぶ判断ロジック
+- [x] **6.4c** フロント `telemetry.js` の buildTelemetryEntry スキーマを spec.md 10.6 に合わせ更新（critic_meaningfulness 廃止、critic_specificity / critic_season_fit / critic_deductions / judge_passed / regenerated / judge_error 追加）
 
 ### 6.5 フロント UI 演出
 
