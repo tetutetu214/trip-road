@@ -1,6 +1,6 @@
 # trip-road タスク一覧
 
-**最終更新**: 2026-04-29
+**最終更新**: 2026-05-03
 
 ---
 
@@ -134,13 +134,14 @@
 
 詳細は `docs/plan.md` 第 10 章。
 
-### 6.1 Wikipedia API helper
+### 6.1 Wikipedia API helper（完了 2026-05-03）
 
-- [ ] `workers/src/wikipedia.js` 実装（`prop=extracts&exintro=true` で intro 取得）
-- [ ] Workers Cache API による 30 日キャッシュ
-- [ ] 政令指定都市の区 → Wikipedia タイトルのマッピング検証
-- [ ] Wikipedia ヒットしない / 失敗時の null 返却挙動
-- [ ] 単体テスト（モック fetch）
+- [x] `workers/src/wikipedia.js` 実装（`prop=extracts&exintro=true` で intro 取得）
+- [x] Workers Cache API による 30 日キャッシュ（`buildCacheKey` + `getCachedWikipediaExtract`）
+- [x] 政令指定都市の区 → Wikipedia タイトルのマッピング検証（実 API で 6 市町村テスト、知見は `knowledge.md` 4.8.2 章）
+- [x] Wikipedia ヒットしない / 失敗時の null 返却挙動（曖昧さ回避ページ判定として「句点なし extract は null」を追加）
+- [x] 単体テスト（純粋関数 24 ケース、`workers/test/wikipedia.test.js`、全 pass）
+- [ ] **持ち越し**: 政令市の区への完全対応（フロントが N03_003 親市名も送る → Worker で `${区} (${親市})` 形式の title を作る）。6.7 までの間に検討
 
 ### 6.2 Judge prompts（4 軸別）
 

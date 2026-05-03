@@ -543,6 +543,53 @@ Critic を組み込む方が、依存とコストの両面で最小。
 
 ---
 
+## 4.8 Plan E / Phase 6.1 Wikipedia API helper（2026-05-03）
+
+Judge 軸 1（事実正確性）の RAG 用に Wikipedia から市町村記事の intro を取得する `workers/src/wikipedia.js` を実装した。Plan E 全体（Wikipedia → Judge 4 軸 → 再生成ループ）の最初のレンガ。
+
+### 4.8.1 設計の要点
+
+- 純粋関数（`buildWikipediaUrl` / `parseWikipediaExtract` / `cleanExtract` / `resolveWikipediaTitle` / `buildCacheKey`）と副作用関数（`fetchWikipediaExtract` / `getCachedWikipediaExtract`）を明確に分離。テストは純粋関数中心、24 ケース pass
+- fetch / Cache API は引数注入で差し替え可能にしたが、Cloudflare Cache API はローカル再現が難しいので統合動作は wrangler dev / 本番で確認する方針（既存の anthropic.js も同流儀）
+- User-Agent は Wikipedia の Etiquette に従い識別可能な文字列（`trip-road/1.0 (https://github.com/tetutetu214/trip-road; tetutetu214@github)`）を必ず付ける
+- Cache TTL 30 日、キーは `https://wikipedia-cache.internal/<muni_code>` のダミー Request
+
+### 4.8.2 実 API 検証で発見した重要な落とし穴
+
+サンプル 6 市町村（相模原市・緑区・新宿区・海老名市・座間市・綾瀬市）で実 API を叩いて挙動確認した結果、2 つの重要な問題が判明：
+
+**(1) 曖昧さ回避ページ問題（致命度: 中、対応済）**
+
+「緑区」だけで検索すると `redirects=true` を付けても**曖昧さ回避ページ**にヒットし、extract として「緑区（みどりく）」のたった 8 字しか返ってこない（緑区は横浜・千葉・相模原・さいたま・名古屋に存在）。この極端に短い extract が `null` ではなく値として返ってしまうと、Sonnet judge に「Wikipedia 情報なし」とは別の「ほぼ空の extract」が渡って判定が暴れる。
+
+対策: `parseWikipediaExtract` 内で「extract に句点（`。`）を含まない場合は null とみなす」判定を追加。Wikipedia 正常記事の intro は通常句点を含むため、曖昧さ回避ページや読み仮名のみのスタブを安全にフィルタできる。
+
+**(2) 政令指定都市の区への redirect 慣習がバラバラ（致命度: 中、要追加対応）**
+
+実検証で発見：
+- **redirect あり**: `大阪市北区` → `北区 (大阪市)`、`札幌市中央区` → `中央区 (札幌市)`
+- **redirect なし**: `相模原市緑区` / `横浜市西区` → どちらも missing
+
+つまり結合形式が市ごとに動いたり動かなかったりする。Wikipedia 編集者の慣習依存。
+
+さらに、現在のフォールバック `{municipality} ({prefecture})` は「緑区 (神奈川県)」を作るが、Wikipedia 上の正式タイトルは「緑区 (相模原市)」「緑区 (横浜市)」のように **親市名カッコ付き** なので、これも missing で取れない。
+
+現状の対応：政令市の区については Wikipedia extract = null となり、Judge 軸 1 は spec.md 10.6 の通り「Wikipedia 情報なし前提で評価（保守的に高得点傾向）」となる。fail-open 動作なので致命的ではないが、軸 1 の精度は下がる。
+
+**今後の対応案（6.7 までの間に検討）**: フロントから N03_003（郡・政令市名）も送ってもらい、Worker 側で `${区} (${親市})` 形式のタイトルを構築する。spec.md API 仕様の小改訂が必要。
+
+### 4.8.3 非問題（spec.md 通り動いた箇所）
+
+- 通常市町村（海老名市・座間市・綾瀬市）：`municipality` そのままでヒット、extract 37〜84 字
+- 東京特別区（新宿区・渋谷区）：`municipality` そのままでヒット、extract 200 字程度
+- `[1]` 等の参考文献記号除去・1500 字切り詰め：cleanExtract で対応（実 intro には [n] が見当たらず、ガードとして残す）
+
+### 4.8.4 テストの組み立て上ハマったところ
+
+- `URLSearchParams.toString()` のエンコードは `encodeURIComponent` と差がある（`(` `)` を非エンコード、スペースを `+` に変換）。Wikipedia API はどちらも受理するので動作は問題ないが、テストで生 URL 文字列の expect 比較をすると壊れる。`new URLSearchParams(url.split('?')[1])` でパースしてからデコード後の値を比較する方式に統一
+
+---
+
 ## 5. 参考資料
 
 ### 5.1 使用データ・API
