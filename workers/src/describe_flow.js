@@ -64,6 +64,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
       description: gen1.description,
       judge_passed: true,
       judge_scores: judge1.scores,
+      judge_deductions: judge1.deductions,
       regenerated: false,
       judge_error: null,
     };
@@ -76,6 +77,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
       description: gen1.description,
       judge_passed: null,
       judge_scores: null,
+      judge_deductions: judge1.deductions ?? {},
       regenerated: false,
       judge_error: judge1.error,
     };
@@ -90,6 +92,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
       description: gen1.description,
       judge_passed: false,
       judge_scores: judge1.scores,
+      judge_deductions: judge1.deductions,
       regenerated: false,
       judge_error: null,
     };
@@ -109,6 +112,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
     description: gen2.description,
     judge_passed: judge2.passed,
     judge_scores: judge2.scores,
+    judge_deductions: judge2.deductions,
     regenerated: true,
     judge_error: judge2.error,
   };

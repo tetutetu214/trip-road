@@ -39,13 +39,25 @@ describe('generateAndJudge', () => {
   it('1 回目で合格 → regenerated=false、再生成は呼ばれない', async () => {
     let genCalls = 0;
     let judgeCalls = 0;
+    const sampleDeductions = {
+      accuracy: [],
+      specificity: [],
+      season_fit: [],
+      density: [],
+    };
     const generator = async () => {
       genCalls++;
       return { ok: true, description: SAMPLE_DESC_1 };
     };
     const judger = async () => {
       judgeCalls++;
-      return { passed: true, lengthOk: true, scores: PASSING_SCORES, deductions: {}, error: null };
+      return {
+        passed: true,
+        lengthOk: true,
+        scores: PASSING_SCORES,
+        deductions: sampleDeductions,
+        error: null,
+      };
     };
 
     const result = await generateAndJudge(PARSED, ENV, { generator, judger });
@@ -54,6 +66,7 @@ describe('generateAndJudge', () => {
     expect(result.description).toBe(SAMPLE_DESC_1);
     expect(result.judge_passed).toBe(true);
     expect(result.judge_scores).toEqual(PASSING_SCORES);
+    expect(result.judge_deductions).toEqual(sampleDeductions);
     expect(result.regenerated).toBe(false);
     expect(result.judge_error).toBeNull();
     expect(genCalls).toBe(1);
@@ -80,14 +93,20 @@ describe('generateAndJudge', () => {
     expect(result.judge_error).toBeNull();
   });
 
-  it('1 回目 NG → 2 回目も NG → regenerated=true、判定は false で返す', async () => {
+  it('1 回目 NG → 2 回目も NG → regenerated=true、判定は false で返す（採用された 2 回目の deductions が乗る）', async () => {
+    const deductions2 = {
+      accuracy: [],
+      specificity: ['桜が美しい（汎用）'],
+      season_fit: [],
+      density: [],
+    };
     const generator = makeGenerator([
       { ok: true, description: SAMPLE_DESC_1 },
       { ok: true, description: SAMPLE_DESC_2 },
     ]);
     const judger = makeJudger([
       { passed: false, lengthOk: true, scores: FAILING_SCORES, deductions: {}, error: null },
-      { passed: false, lengthOk: true, scores: FAILING_SCORES, deductions: {}, error: null },
+      { passed: false, lengthOk: true, scores: FAILING_SCORES, deductions: deductions2, error: null },
     ]);
 
     const result = await generateAndJudge(PARSED, ENV, { generator, judger });
@@ -96,6 +115,7 @@ describe('generateAndJudge', () => {
     expect(result.description).toBe(SAMPLE_DESC_2); // NG でも 2 回目を採用（より新しい試行）
     expect(result.judge_passed).toBe(false);
     expect(result.regenerated).toBe(true);
+    expect(result.judge_deductions).toEqual(deductions2); // 採用された judge2 の deductions
     expect(result.judge_error).toBeNull();
   });
 

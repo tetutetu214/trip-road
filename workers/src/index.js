@@ -104,6 +104,7 @@ export default {
           description: flow.description,
           judge_passed: flow.judge_passed,
           judge_scores: flow.judge_scores,
+          judge_deductions: flow.judge_deductions,
           regenerated: flow.regenerated,
           judge_error: flow.judge_error,
         },

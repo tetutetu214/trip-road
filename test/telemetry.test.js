@@ -37,6 +37,58 @@ describe('buildTelemetryEntry', () => {
     expect(entry.re_visited_count).toBe(0);
     expect(entry.user_rating).toBeNull();
   });
+
+  it('Plan E: Judge スコアフィールドが既定 null で初期化される（キャッシュヒット呼出想定）', () => {
+    const entry = buildTelemetryEntry({
+      trace_id: 'test-id',
+      muni_code: '14153',
+      solar_term: '05',
+      description: '相模原市緑区...',
+      ts_generated: 1745000000000,
+    });
+    expect(entry.critic_accuracy).toBeNull();
+    expect(entry.critic_specificity).toBeNull();
+    expect(entry.critic_season_fit).toBeNull();
+    expect(entry.critic_density).toBeNull();
+    expect(entry.critic_deductions).toBeNull();
+    expect(entry.judge_passed).toBeNull();
+    expect(entry.regenerated).toBe(false);
+    expect(entry.judge_error).toBeNull();
+    // 廃止フィールドは含まれない
+    expect(entry).not.toHaveProperty('critic_meaningfulness');
+  });
+
+  it('Plan E: Judge 結果を渡すと entry に反映される（新規生成時想定）', () => {
+    const deductions = {
+      accuracy: [],
+      specificity: ['桜が美しい（汎用）'],
+      season_fit: [],
+      density: ['淡紅色に染まり（情緒）'],
+    };
+    const entry = buildTelemetryEntry({
+      trace_id: 'test-id',
+      muni_code: '14153',
+      solar_term: '05',
+      description: '相模原市緑区...',
+      ts_generated: 1745000000000,
+      critic_accuracy: 5,
+      critic_specificity: 3,
+      critic_season_fit: 5,
+      critic_density: 2,
+      critic_deductions: deductions,
+      judge_passed: false,
+      regenerated: true,
+      judge_error: null,
+    });
+    expect(entry.critic_accuracy).toBe(5);
+    expect(entry.critic_specificity).toBe(3);
+    expect(entry.critic_season_fit).toBe(5);
+    expect(entry.critic_density).toBe(2);
+    expect(entry.critic_deductions).toEqual(deductions);
+    expect(entry.judge_passed).toBe(false);
+    expect(entry.regenerated).toBe(true);
+    expect(entry.judge_error).toBeNull();
+  });
 });
 
 describe('shouldSample', () => {

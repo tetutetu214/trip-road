@@ -229,9 +229,14 @@ async function handlePosition({ lat, lon, speed }, password) {
         solar_term: solarTerm,
       });
       if (result.ok) {
-        setCachedDescription(muni.code, solarTerm, result.description);
+        // Plan E (6.4): judge_passed===true のときだけキャッシュに書く。
+        // false（NG）or null（fail-open）は表示はするが localStorage には書かない
+        // → 次回同じ市町村に来たら再度 Workers を呼んで生成し直す
+        if (result.judge_passed === true) {
+          setCachedDescription(muni.code, solarTerm, result.description);
+        }
         setDescription(result.description);
-        // 新規生成を記録
+        // 新規生成を記録（Judge スコア付き）
         if (currentTraceId) {
           appendTelemetry(buildTelemetryEntry({
             trace_id: currentTraceId,
@@ -239,6 +244,14 @@ async function handlePosition({ lat, lon, speed }, password) {
             solar_term: solarTerm,
             description: result.description,
             ts_generated: Date.now(),
+            critic_accuracy: result.judge_scores?.accuracy ?? null,
+            critic_specificity: result.judge_scores?.specificity ?? null,
+            critic_season_fit: result.judge_scores?.season_fit ?? null,
+            critic_density: result.judge_scores?.density ?? null,
+            critic_deductions: result.judge_deductions ?? null,
+            judge_passed: result.judge_passed,
+            regenerated: result.regenerated,
+            judge_error: result.judge_error,
           }));
           currentDisplayStartMs = Date.now();
           updateTelemetry(currentTraceId, { ts_displayed: currentDisplayStartMs });

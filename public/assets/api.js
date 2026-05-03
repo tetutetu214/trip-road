@@ -10,10 +10,19 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 /**
  * 土地のたよりを取得する。
  *
+ * Plan E (Phase 6.4) で Workers レスポンスに judge_passed / judge_scores /
+ * judge_deductions / regenerated / judge_error が含まれるようになった。
+ * ここではそれらをそのまま戻り値に乗せ、判定ロジックは呼び出し側（app.js）が担う。
+ *
  * @param {string} password - X-App-Password に送る値
  * @param {{prefecture: string, municipality: string, solar_term: string}} req
  *   solar_term は二十四節気の番号文字列（'01'〜'24'）
- * @returns {Promise<{ok: true, description: string} | {ok: false, status: number, error: string}>}
+ * @returns {Promise<
+ *   | {ok: true, description: string, judge_passed: boolean|null,
+ *      judge_scores: object|null, judge_deductions: object|null,
+ *      regenerated: boolean, judge_error: string|null}
+ *   | {ok: false, status: number, error: string}
+ * >}
  */
 export async function fetchDescription(password, req) {
   let lastError = { ok: false, status: 0, error: 'unknown' };
@@ -38,7 +47,17 @@ export async function fetchDescription(password, req) {
       }
       if (res.ok) {
         const data = await res.json();
-        if (data?.description) return { ok: true, description: data.description };
+        if (data?.description) {
+          return {
+            ok: true,
+            description: data.description,
+            judge_passed: data.judge_passed ?? null,
+            judge_scores: data.judge_scores ?? null,
+            judge_deductions: data.judge_deductions ?? null,
+            regenerated: data.regenerated ?? false,
+            judge_error: data.judge_error ?? null,
+          };
+        }
         lastError = { ok: false, status: res.status, error: 'empty_description' };
       } else {
         lastError = { ok: false, status: res.status, error: 'upstream_error' };

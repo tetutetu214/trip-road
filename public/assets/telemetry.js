@@ -25,8 +25,24 @@ export function generateTraceId() {
  * テレメトリ entry を組み立てる（生成直後）。
  * その後 storage.js に appendTelemetry で追加し、表示・離脱時に updateTelemetry で更新。
  *
- * @param {{trace_id: string, muni_code: string, solar_term: string, description: string, ts_generated: number}} args
- *   solar_term は二十四節気の番号文字列（'01'〜'24'）
+ * Plan E (Phase 6.4) で Judge スコアフィールドを追加。
+ * critic_meaningfulness は Plan E では使わないので削除（spec.md 10.6 廃止フィールド）。
+ * Judge 関連フィールドはキャッシュヒット時の呼び出しでは欠落（既定 null）でよい。
+ *
+ * @param {object} args
+ * @param {string} args.trace_id
+ * @param {string} args.muni_code
+ * @param {string} args.solar_term  二十四節気の番号文字列（'01'〜'24'）
+ * @param {string} args.description
+ * @param {number} args.ts_generated
+ * @param {number|null} [args.critic_accuracy]
+ * @param {number|null} [args.critic_specificity]
+ * @param {number|null} [args.critic_season_fit]
+ * @param {number|null} [args.critic_density]
+ * @param {object|null} [args.critic_deductions]  {accuracy, specificity, season_fit, density: string[]}
+ * @param {boolean|null} [args.judge_passed]
+ * @param {boolean} [args.regenerated]
+ * @param {string|null} [args.judge_error]
  * @returns {object}
  */
 export function buildTelemetryEntry(args) {
@@ -37,10 +53,15 @@ export function buildTelemetryEntry(args) {
     description: args.description,
     ts_generated: args.ts_generated,
 
-    // Critic スコア（生成と同期で評価する場合、Stage 2 以降）
-    critic_accuracy: null,
-    critic_meaningfulness: null,
-    critic_density: null,
+    // Plan E: Judge 4 軸スコア（生成時のみ。キャッシュヒット呼出は null）
+    critic_accuracy: args.critic_accuracy ?? null,
+    critic_specificity: args.critic_specificity ?? null,
+    critic_season_fit: args.critic_season_fit ?? null,
+    critic_density: args.critic_density ?? null,
+    critic_deductions: args.critic_deductions ?? null,
+    judge_passed: args.judge_passed ?? null,
+    regenerated: args.regenerated ?? false,
+    judge_error: args.judge_error ?? null,
 
     // 暗黙シグナル
     ts_displayed: null,
