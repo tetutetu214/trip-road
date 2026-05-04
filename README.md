@@ -25,39 +25,21 @@
 
 ## アーキテクチャ
 
-3 つの Cloudflare サービス + Anthropic API（Haiku 生成 + Sonnet 4.6 Judge）+ Wikipedia API（RAG）+ AWS S3（テレメトリ Sink）で構成。バックエンド DB は持たず、状態は localStorage に集約。
+3 つの Cloudflare サービス（Pages × 2 + Workers）+ Anthropic API（Haiku 生成 + Sonnet 4.6 Judge）+ Wikipedia API（RAG）+ AWS S3（テレメトリ Sink）で構成。バックエンド DB は持たず、状態は localStorage に集約。
 
-```
-       ┌─────────────────────────────────┐
-       │    iPhone Safari (PWA)            │
-       │   trip-road.tetutetu214.com       │
-       └────────┬─────────────────┬───────┘
-                │                 │
-       静的配信 │       認証付きAPI │
-                ▼                 ▼
-   ┌───────────────────┐  ┌──────────────────────────────┐
-   │ Cloudflare Pages   │  │ Cloudflare Workers             │
-   │ trip-road          │  │ trip-road-api                  │
-   │ (HTML/JS/CSS)      │  │ X-App-Password 認証            │
-   └───────────────────┘  │ /api/describe: 生成→Judge→     │
-                          │   不合格なら指摘付き再生成       │
-   ┌───────────────────┐  │ /api/telemetry: S3 SigV4 PUT   │
-   │ Cloudflare Pages   │  └────┬────────┬────────┬───────┘
-   │ trip-road-data     │       │        │        │
-   │ (1,905 市町村       │       ▼        ▼        ▼
-   │  GeoJSON +         │  ┌─────────┐┌────────┐┌──────────┐
-   │  adjacency.json)   │  │Anthropic││Wikipedia││ AWS S3   │
-   └───────────────────┘  │Messages ││  API   ││テレメトリ │
-                          │Haiku    ││(intro  ││Sink      │
-                          │+Sonnet  ││ extracts││(aws4fetch│
-                          │ 4.6     ││ 30日   ││ SigV4)   │
-                          │         ││ Cache) ││          │
-                          └─────────┘└────────┘└──────────┘
+![trip-road 構成図](docs/architecture/trip-road.png)
 
-   外部参照:
-   - 地理院タイル（地図背景、PDL1.0）
-   - 国土地理院 逆ジオコーダ（P-in-P フォールバック）
-```
+主要な通信経路は次のとおり。
+
+- **ブラウザ → Cloudflare Pages (Front)**: アプリ本体（HTML/CSS/JS）のダウンロード
+- **ブラウザ JS → Cloudflare Pages (Data)**: 市町村境界線 GeoJSON / `adjacency.json` の取得（Workers は経由しない）
+- **ブラウザ JS → Cloudflare Workers**: `X-App-Password` 認証付きで `/api/describe`（生成 + Judge）と `/api/telemetry`（S3 中継）を呼出
+- **ブラウザ JS → 国土地理院**: 地図タイル PNG と P-in-P フォールバック用の逆ジオコーダ（公開 API、Workers は経由しない）
+- **Workers → Anthropic API**: Haiku で生成、Sonnet 4.6 で 4 軸並列 Judge、不合格なら 1 回だけ指摘付き再生成
+- **Workers → Wikipedia API**: Judge 軸 1（事実正確性）の根拠資料、Workers Cache API で 30 日キャッシュ
+- **Workers → AWS S3**: テレメトリを `aws4fetch` で SigV4 署名付き PUT
+
+元データ N03（行政区域データ）の出典は国土交通省。
 
 ## 技術スタック
 
