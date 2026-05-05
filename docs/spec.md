@@ -634,29 +634,33 @@ curl -X POST http://localhost:8787/api/describe \
 
 ### 10.1 全体フロー
 
+F-1.3b（2026-05-06）以降、Wikipedia 抜粋は Judge 軸 1 だけでなく Generator にも渡される（生成側 RAG）。Wikipedia 取得が生成より前に移動した。
+
 ```
 [フロント]                    [Workers /api/describe]              [外部]
    │                                  │
    │── POST /api/describe ────────────▶
-   │                                  │── 生成 ──────────────────▶ Anthropic Haiku
-   │                                  │◀──────── description ────
-   │                                  │
-   │                                  │── Wikipedia 取得（軸1用）─▶ Wikipedia API
+   │                                  │── Wikipedia 取得 ─────────▶ Wikipedia API
    │                                  │◀──────── extract ─────────
    │                                  │   （Workers Cache API、TTL 30日）
    │                                  │
-   │                                  │── Judge 4軸並列 ──────────▶ Anthropic Sonnet 4.6
+   │                                  │── 生成（Wikipedia 抜粋同梱）▶ Anthropic Haiku
+   │                                  │◀──────── description ────
+   │                                  │
+   │                                  │── Judge 4軸並列（同抜粋を再利用）▶ Anthropic Sonnet 4.6
    │                                  │◀──────── 4 scores ────────
    │                                  │
    │                                  │   if 全軸4点以上 + 文字数OK
    │                                  │   → 合格 / キャッシュへ
-   │                                  │   else 1回だけ再生成
+   │                                  │   else 1回だけ再生成（同抜粋＋校閲指摘を Generator に同梱）
    │                                  │   → 再評価 → 結果に関わらず打ち切り
    │                                  │
    │◀─ JSON (description + judge_*) ──│
    │                                  │
    │ 経過時間で段階表示                 │
 ```
+
+Wikipedia 取得が null（記事なし）または例外を返した場合、Generator には抜粋セクションを渡さず（system prompt 内のルールで「セクションなし＝記事なし」として扱う指示）、Judge も該当軸を「情報なし」差し替えで保守的評価する。
 
 ### 10.2 Wikipedia API クライアント仕様
 
