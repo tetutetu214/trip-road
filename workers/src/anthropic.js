@@ -8,17 +8,12 @@
  * と、副作用ありの 1 関数:
  *   - callAnthropic: Anthropic API に実際に fetch
  * で構成される。
+ *
+ * F-1.3b で SOLAR_TERM_META を共通モジュール solar_term_meta.js に切り出し、
+ * Generator と Judge が同じ節気メタを参照するようにした（DRY）。
  */
 
-// 二十四節気の番号文字列 ('01'〜'24') → 日本語名
-const SOLAR_TERM_MAP = {
-  '01': '立春', '02': '雨水', '03': '啓蟄', '04': '春分',
-  '05': '清明', '06': '穀雨', '07': '立夏', '08': '小満',
-  '09': '芒種', '10': '夏至', '11': '小暑', '12': '大暑',
-  '13': '立秋', '14': '処暑', '15': '白露', '16': '秋分',
-  '17': '寒露', '18': '霜降', '19': '立冬', '20': '小雪',
-  '21': '大雪', '22': '冬至', '23': '小寒', '24': '大寒',
-};
+import { SOLAR_TERM_META } from './solar_term_meta.js';
 
 const SYSTEM_PROMPT = `あなたは日本の土地情報の解説者です。指定された都道府県・市区町村・二十四節気から、カーナビの土地情報のように淡々とした、3〜4文の解説を書いてください。
 
@@ -48,7 +43,7 @@ const SYSTEM_PROMPT = `あなたは日本の土地情報の解説者です。指
  * 未知の値は undefined を返す。
  */
 export function solarTermToJa(solarTerm) {
-  return SOLAR_TERM_MAP[solarTerm];
+  return SOLAR_TERM_META[solarTerm]?.name;
 }
 
 /**
@@ -68,7 +63,7 @@ export function parseDescribeRequest(body) {
   if (typeof municipality !== 'string' || municipality.length === 0) {
     return { ok: false, error: 'missing required field: municipality' };
   }
-  if (typeof solar_term !== 'string' || !SOLAR_TERM_MAP[solar_term]) {
+  if (typeof solar_term !== 'string' || !SOLAR_TERM_META[solar_term]) {
     return { ok: false, error: 'invalid solar_term (must be "01"〜"24")' };
   }
   return { ok: true, value: { prefecture, municipality, solar_term } };
