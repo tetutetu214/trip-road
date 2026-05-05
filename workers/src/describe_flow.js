@@ -1,15 +1,20 @@
 /**
- * /api/describe のメインフロー（Plan E / Phase 6.4b）
+ * /api/describe のメインフロー（Plan E / Phase 6.4b、F-1.3b で生成側 RAG 拡張）
  *
  * 生成 → judge → NG なら 1 回だけ再生成 → 再 judge → 打ち切り
  * のループを担う。`workers/src/index.js` のハンドラから呼び出される。
  *
+ * F-1.3b で Wikipedia 抜粋をフロー先頭で取得し、Generator にも渡すよう拡張。
+ * Judge は内部で同じ抜粋を再取得するが、Workers Cache API（30 日 TTL）が
+ * ヒットするため実質 1 fetch で済む。
+ *
  * 設計判断・障害ハンドリング方針は docs/plan.md 第 10 章 / docs/spec.md 10.4-10.5
- * を参照。実装上の判断は docs/knowledge.md 4.11 章を参照。
+ * を参照。実装上の判断は docs/knowledge.md 4.11 / 4.18 章を参照。
  */
 
 import { buildMessagesRequest, callAnthropic } from './anthropic.js';
 import { judgeAll } from './judge.js';
+import { getCachedWikipediaExtract } from './wikipedia.js';
 
 // 軸キー → 日本語ラベル（feedback テキスト用）
 const AXIS_LABELS = {
@@ -57,12 +62,16 @@ export function formatDeductionsForFeedback(deductions) {
  *     - 再生成失敗 → 1 回目を返す（regenerated=false、judge_passed は 1 回目の値）
  *     - 再生成成功 → 2 回目の判定結果で返す（regenerated=true）
  *
+ * F-1.3b: フロー先頭で Wikipedia 抜粋を取得し、Generator にも渡す（生成側 RAG）。
+ * fetcher が null や例外を返した場合は抜粋なしで継続（Generator 側で抜粋セクションを省略）。
+ *
  * @param {object} parsed - parseDescribeRequest の value（{prefecture, municipality, solar_term}）
  * @param {object} env - Workers env
  * @param {object} [deps] - 依存注入
  * @param {Function} [deps.generator=callAnthropic]
  * @param {Function} [deps.judger=judgeAll]
  * @param {typeof fetch} [deps.fetchFn=fetch]
+ * @param {Function} [deps.wikipediaFetcher=getCachedWikipediaExtract]
  * @returns {Promise<
  *   | {ok: true, description: string, judge_passed: boolean|null,
  *      judge_scores: object|null, regenerated: boolean, judge_error: string|null}
@@ -73,8 +82,24 @@ export async function generateAndJudge(parsed, env, deps = {}) {
   const generator = deps.generator ?? callAnthropic;
   const judger = deps.judger ?? judgeAll;
   const fetchFn = deps.fetchFn ?? fetch;
+  const wikipediaFetcher = deps.wikipediaFetcher ?? getCachedWikipediaExtract;
 
-  const messagesReq = buildMessagesRequest(parsed);
+  // F-1.3b: 先に Wikipedia 抜粋を取得して Generator にも渡す。
+  // 取得失敗（null や例外）の場合は抜粋なしで継続。Generator 側で
+  // 抜粋セクション自体を省略する設計（薄い市町村でハルシネーション増を防ぐ）。
+  let wikipediaExtract = null;
+  try {
+    wikipediaExtract = await wikipediaFetcher({
+      muniCode: parsed.municipality,
+      municipality: parsed.municipality,
+      prefecture: parsed.prefecture,
+      fetchFn,
+    });
+  } catch (_err) {
+    wikipediaExtract = null;
+  }
+
+  const messagesReq = buildMessagesRequest({ ...parsed, wikipediaExtract });
 
   // 1 回目生成
   const gen1 = await generator(messagesReq, env.ANTHROPIC_API_KEY);
@@ -121,8 +146,13 @@ export async function generateAndJudge(parsed, env, deps = {}) {
   // passed=false: 1 回だけ再生成。
   // Plan E (6.4d): judge1 の deductions を整形して generator に渡し、
   // 「同じ失敗を繰り返さない」よう Haiku に文脈を伝える。
+  // F-1.3b: Wikipedia 抜粋は 1 回目と同じものを再利用（同じ市町村なので変わらない）。
   const feedback = formatDeductionsForFeedback(judge1.deductions);
-  const messagesReq2 = buildMessagesRequest({ ...parsed, regenerationFeedback: feedback });
+  const messagesReq2 = buildMessagesRequest({
+    ...parsed,
+    wikipediaExtract,
+    regenerationFeedback: feedback,
+  });
   const gen2 = await generator(messagesReq2, env.ANTHROPIC_API_KEY);
   if (!gen2.ok) {
     // 再生成エラー → 1 回目を返す（採用試行は 1 回のままなので regenerated=false）

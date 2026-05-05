@@ -17,6 +17,10 @@ const SAMPLE_DESC_2 =
 const PASSING_SCORES = { accuracy: 5, specificity: 5, season_fit: 5, density: 5 };
 const FAILING_SCORES = { accuracy: 5, specificity: 3, season_fit: 5, density: 5 };
 
+// F-1.3b: 既存テストでは Wikipedia 取得をモックして null を返させる。
+// 実 fetch を呼ばずに decribe_flow の本筋の振る舞いだけを検証するため。
+const NULL_WIKIPEDIA_FETCHER = async () => null;
+
 function makeGenerator(sequence) {
   let i = 0;
   return async () => {
@@ -60,7 +64,7 @@ describe('generateAndJudge', () => {
       };
     };
 
-    const result = await generateAndJudge(PARSED, ENV, { generator, judger });
+    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher: NULL_WIKIPEDIA_FETCHER });
 
     expect(result.ok).toBe(true);
     expect(result.description).toBe(SAMPLE_DESC_1);
@@ -83,7 +87,7 @@ describe('generateAndJudge', () => {
       { passed: true, lengthOk: true, scores: PASSING_SCORES, deductions: {}, error: null },
     ]);
 
-    const result = await generateAndJudge(PARSED, ENV, { generator, judger });
+    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher: NULL_WIKIPEDIA_FETCHER });
 
     expect(result.ok).toBe(true);
     expect(result.description).toBe(SAMPLE_DESC_2); // 再生成版が返る
@@ -109,7 +113,7 @@ describe('generateAndJudge', () => {
       { passed: false, lengthOk: true, scores: FAILING_SCORES, deductions: deductions2, error: null },
     ]);
 
-    const result = await generateAndJudge(PARSED, ENV, { generator, judger });
+    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher: NULL_WIKIPEDIA_FETCHER });
 
     expect(result.ok).toBe(true);
     expect(result.description).toBe(SAMPLE_DESC_2); // NG でも 2 回目を採用（より新しい試行）
@@ -133,7 +137,7 @@ describe('generateAndJudge', () => {
       error: 'sonnet down',
     });
 
-    const result = await generateAndJudge(PARSED, ENV, { generator, judger });
+    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher: NULL_WIKIPEDIA_FETCHER });
 
     expect(result.ok).toBe(true);
     expect(result.description).toBe(SAMPLE_DESC_1);
@@ -153,7 +157,7 @@ describe('generateAndJudge', () => {
       { passed: false, lengthOk: true, scores: FAILING_SCORES, deductions: {}, error: null },
     ]);
 
-    const result = await generateAndJudge(PARSED, ENV, { generator, judger });
+    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher: NULL_WIKIPEDIA_FETCHER });
 
     expect(result.ok).toBe(true);
     expect(result.description).toBe(SAMPLE_DESC_1); // 1 回目を返す
@@ -168,7 +172,7 @@ describe('generateAndJudge', () => {
       throw new Error('should not be called');
     };
 
-    const result = await generateAndJudge(PARSED, ENV, { generator, judger });
+    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher: NULL_WIKIPEDIA_FETCHER });
 
     expect(result.ok).toBe(false);
     expect(result.status).toBe(502);
@@ -196,7 +200,7 @@ describe('generateAndJudge', () => {
       { passed: true, lengthOk: true, scores: PASSING_SCORES, deductions: {}, error: null },
     ]);
 
-    const result = await generateAndJudge(PARSED, ENV, { generator, judger });
+    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher: NULL_WIKIPEDIA_FETCHER });
 
     expect(result.ok).toBe(true);
     expect(result.regenerated).toBe(true);
@@ -212,6 +216,119 @@ describe('generateAndJudge', () => {
     expect(secondUserContent).toContain('自然豊かな景観（汎用）');
     expect(secondUserContent).toContain('淡紅色に染まり（情緒）');
     expect(secondUserContent).toMatch(/書き直し|書き直/);
+  });
+
+  it('F-1.3b: Wikipedia 抜粋ありの場合、1 回目 generator の messagesReq に [Wikipedia 抜粋] セクションが入る', async () => {
+    const extract = '相模原市は、神奈川県北部に位置する政令指定都市である。';
+    const wikipediaFetcher = async () => extract;
+    const generatorCalls = [];
+    const generator = async (messagesReq) => {
+      generatorCalls.push(messagesReq);
+      return { ok: true, description: SAMPLE_DESC_1 };
+    };
+    const judger = async () => ({
+      passed: true,
+      lengthOk: true,
+      scores: PASSING_SCORES,
+      deductions: {},
+      error: null,
+    });
+
+    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher });
+
+    expect(result.ok).toBe(true);
+    expect(generatorCalls).toHaveLength(1);
+    const userContent = generatorCalls[0].messages[0].content;
+    expect(userContent).toContain('[Wikipedia 抜粋]');
+    expect(userContent).toContain('政令指定都市');
+  });
+
+  it('F-1.3b: Wikipedia 抜粋 null の場合、generator の messagesReq に [Wikipedia 抜粋] セクションが入らない', async () => {
+    const generatorCalls = [];
+    const generator = async (messagesReq) => {
+      generatorCalls.push(messagesReq);
+      return { ok: true, description: SAMPLE_DESC_1 };
+    };
+    const judger = async () => ({
+      passed: true,
+      lengthOk: true,
+      scores: PASSING_SCORES,
+      deductions: {},
+      error: null,
+    });
+
+    await generateAndJudge(PARSED, ENV, {
+      generator,
+      judger,
+      wikipediaFetcher: NULL_WIKIPEDIA_FETCHER,
+    });
+
+    const userContent = generatorCalls[0].messages[0].content;
+    expect(userContent).not.toContain('[Wikipedia 抜粋]');
+  });
+
+  it('F-1.3b: 再生成時も 1 回目と同じ Wikipedia 抜粋が 2 回目 generator の messagesReq に含まれる（再取得しない）', async () => {
+    const extract = '海老名市は、神奈川県中部に位置する都市である。';
+    let fetchCalls = 0;
+    const wikipediaFetcher = async () => {
+      fetchCalls++;
+      return extract;
+    };
+    const generatorCalls = [];
+    const generator = async (messagesReq) => {
+      generatorCalls.push(messagesReq);
+      return {
+        ok: true,
+        description: generatorCalls.length === 1 ? SAMPLE_DESC_1 : SAMPLE_DESC_2,
+      };
+    };
+    const judger = makeJudger([
+      {
+        passed: false,
+        lengthOk: true,
+        scores: FAILING_SCORES,
+        deductions: { accuracy: ['河川名の誤認'] },
+        error: null,
+      },
+      { passed: true, lengthOk: true, scores: PASSING_SCORES, deductions: {}, error: null },
+    ]);
+
+    await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher });
+
+    expect(fetchCalls).toBe(1); // 再生成時は再取得しない
+    expect(generatorCalls).toHaveLength(2);
+    // 1 回目に Wikipedia 抜粋
+    expect(generatorCalls[0].messages[0].content).toContain('[Wikipedia 抜粋]');
+    expect(generatorCalls[0].messages[0].content).toContain('神奈川県中部');
+    // 2 回目にも同じ Wikipedia 抜粋 + 再生成 feedback
+    expect(generatorCalls[1].messages[0].content).toContain('[Wikipedia 抜粋]');
+    expect(generatorCalls[1].messages[0].content).toContain('神奈川県中部');
+    expect(generatorCalls[1].messages[0].content).toContain('指摘');
+  });
+
+  it('F-1.3b: wikipediaFetcher が例外を投げた場合、null 扱いで継続する', async () => {
+    const wikipediaFetcher = async () => {
+      throw new Error('wikipedia API down');
+    };
+    let genCalls = 0;
+    const generator = async (messagesReq) => {
+      genCalls++;
+      // 抜粋セクションが入っていないことも検証
+      expect(messagesReq.messages[0].content).not.toContain('[Wikipedia 抜粋]');
+      return { ok: true, description: SAMPLE_DESC_1 };
+    };
+    const judger = async () => ({
+      passed: true,
+      lengthOk: true,
+      scores: PASSING_SCORES,
+      deductions: {},
+      error: null,
+    });
+
+    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher });
+
+    expect(result.ok).toBe(true);
+    expect(genCalls).toBe(1);
   });
 });
 
