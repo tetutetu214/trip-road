@@ -104,6 +104,72 @@ describe('buildMessagesRequest', () => {
     expect(req.messages[0].content).toContain('22');
   });
 
+  it('user content に節気の period（期間表現）も含める（F-1.3b）', () => {
+    const req = buildMessagesRequest({
+      prefecture: '北海道',
+      municipality: '函館市',
+      solar_term: '22',
+    });
+    // SOLAR_TERM_META['22'].period === '12月22日頃〜小寒前'
+    expect(req.messages[0].content).toContain('12月22日頃');
+    expect(req.messages[0].content).toContain('小寒前');
+  });
+
+  it('system prompt に Wikipedia 抜粋の使い方と Few-shot 参考例（函館市）が含まれる（F-1.3b）', () => {
+    const req = buildMessagesRequest({
+      prefecture: '神奈川県',
+      municipality: '相模原市緑区',
+      solar_term: '05',
+    });
+    expect(req.system).toContain('Wikipedia 抜粋');
+    expect(req.system).toContain('参考例');
+    expect(req.system).toContain('函館市');
+    expect(req.system).toContain('処暑');
+    expect(req.system).toContain('そのまま引用');
+  });
+
+  it('wikipediaExtract ありの場合、user content に [Wikipedia 抜粋] セクションが入る（F-1.3b）', () => {
+    const extract =
+      '相模原市は、神奈川県北部に位置する政令指定都市である。市域は緑区・中央区・南区の 3 区に分かれる。';
+    const req = buildMessagesRequest({
+      prefecture: '神奈川県',
+      municipality: '相模原市緑区',
+      solar_term: '05',
+      wikipediaExtract: extract,
+    });
+    expect(req.messages[0].content).toContain('[Wikipedia 抜粋]');
+    expect(req.messages[0].content).toContain('政令指定都市');
+    expect(req.messages[0].content).toContain('緑区・中央区・南区');
+  });
+
+  it('wikipediaExtract が空文字 / null / undefined の場合は抜粋セクションを入れない（F-1.3b）', () => {
+    for (const ext of ['', null, undefined]) {
+      const req = buildMessagesRequest({
+        prefecture: '神奈川県',
+        municipality: '相模原市緑区',
+        solar_term: '05',
+        wikipediaExtract: ext,
+      });
+      expect(req.messages[0].content).not.toContain('[Wikipedia 抜粋]');
+    }
+  });
+
+  it('wikipediaExtract と regenerationFeedback の両方ありの場合、両方とも user content に含まれる（F-1.3b）', () => {
+    const extract = '海老名市は、神奈川県中部に位置する都市である。';
+    const feedback = '- 事実正確性:\n  ・相模川と中津川に挟まれた（誤認）';
+    const req = buildMessagesRequest({
+      prefecture: '神奈川県',
+      municipality: '海老名市',
+      solar_term: '06',
+      wikipediaExtract: extract,
+      regenerationFeedback: feedback,
+    });
+    expect(req.messages[0].content).toContain('[Wikipedia 抜粋]');
+    expect(req.messages[0].content).toContain('神奈川県中部');
+    expect(req.messages[0].content).toContain('前回');
+    expect(req.messages[0].content).toContain('相模川と中津川に挟まれた（誤認）');
+  });
+
   it('regenerationFeedback なしの場合、user content に「指摘」セクションは含まれない', () => {
     const req = buildMessagesRequest({
       prefecture: '神奈川県',

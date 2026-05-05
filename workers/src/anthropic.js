@@ -36,7 +36,26 @@ const SYSTEM_PROMPT = `あなたは日本の土地情報の解説者です。指
   - 地形的特徴（盆地・河岸段丘・扇状地・リアス海岸・台地・カルデラなど）
   - 名物・特産品
 - 市町村名・都道府県名以外の固有名詞（具体的な地名・施設名・歴史的人物名）は、確信があるものだけ書く。曖昧な記憶で捻り出さない。情報量より正確さを優先する
-- 祭りやイベントの具体的な日付・回数・年号は書かない（代わりに「例年◯月頃」と表現する）`;
+- 祭りやイベントの具体的な日付・回数・年号は書かない（代わりに「例年◯月頃」と表現する）
+
+# Wikipedia 抜粋の使い方
+ユーザメッセージに「[Wikipedia 抜粋]」セクションがある場合、その内容を事実確認のための参考資料として扱ってください。
+- 抜粋の文章をそのまま引用したり、文の構造を真似たりしないでください
+- 抜粋に書かれた地名・施設・歴史事実を素材として、観光ガイド口調の「土地のたより」を自分の言葉で書いてください
+- 抜粋に書かれていない地名・河川名・歴史的事実は、確信があるものだけ書く。曖昧なら省略してください
+- 抜粋セクションがない場合、その市町村の Wikipedia 記事が見つからなかったことを意味します。固有名詞を捻り出さず、確信がある事実だけで書いてください
+
+# 参考例
+入力:
+都道府県: 北海道
+市区町村: 函館市
+二十四節気: 処暑（14、8月23日頃〜白露前）
+
+[Wikipedia 抜粋]
+函館市は、北海道渡島地方南部に位置する中核市である。1859年に開港した国際貿易港・函館港を有し、明治期には外国人居留地が形成された。函館山からの夜景は世界三大夜景の一つとされる。
+
+良い出力例（137字、文体は自分の言葉、抜粋の事実を素材化）:
+函館市は北海道渡島地方の南部に位置します。函館山の麓に広がる港町で、1859年に国際貿易港として開港し、明治期には外国人居留地が形成されました。処暑のころ、北海道では夏の暑さが和らぎ、いか漁の最盛期を迎えます。函館港の朝市にも秋の気配が見え始める時期です。`;
 
 /**
  * 二十四節気の番号文字列（'01'〜'24'）を日本語名に変換。
@@ -72,22 +91,35 @@ export function parseDescribeRequest(body) {
 /**
  * Anthropic Messages API にそのまま POST できる JSON を組み立てる。
  *
- * Plan E (Phase 6.4d) で `regenerationFeedback` 引数を追加。
+ * F-1.3b で `wikipediaExtract` 引数を追加。Generator 側に Wikipedia 抜粋を
+ * 直接渡すことで、Haiku が「知らない事実」をハルシネートする問題を抑制する
+ * （生成側 RAG）。null/空文字のときは抜粋セクションを丸ごと省略し、薄い
+ * 市町村で固有名詞を捻り出させない。
+ * 節気の期間（period）も SOLAR_TERM_META から user メッセージに含めるよう
+ * 拡張。Judge と Generator で同じメタ情報を見て書く/評価する構造になる。
+ *
+ * Plan E (Phase 6.4d) で `regenerationFeedback` 引数を追加済。
  * 1 回目 NG で再生成するときに、judge の指摘事項を user メッセージに添えて
  * 「同じ失敗を繰り返させない」よう Haiku に文脈を渡す。
- * system prompt（generator 自身の指針）は変更せず、再生成時の追加指示は
- * user メッセージ側にのみ載せる方針（責務分離）。
+ * system prompt（generator 自身の指針）には Wikipedia 抜粋の使い方を含む
+ * 共通ルールのみを置き、リクエスト固有のデータ（市町村名・節気・抜粋・
+ * 再生成フィードバック）は user メッセージ側に載せる責務分離。
  *
  * @param {object} req
  * @param {string} req.prefecture
  * @param {string} req.municipality
- * @param {string} req.solar_term
- * @param {string} [req.regenerationFeedback] - 整形済みの指摘テキスト（空文字/null/undefined は無視）
+ * @param {string} req.solar_term - '01'〜'24'
+ * @param {string} [req.wikipediaExtract] - Wikipedia 記事の intro 抜粋。空文字/null/undefined はセクション省略
+ * @param {string} [req.regenerationFeedback] - 整形済みの指摘テキスト。空文字/null/undefined は無視
  * @returns {object} Messages API request body
  */
 export function buildMessagesRequest(req) {
-  const solarTermJa = solarTermToJa(req.solar_term);
-  let userContent = `都道府県: ${req.prefecture}\n市区町村: ${req.municipality}\n二十四節気: ${solarTermJa}（${req.solar_term}）`;
+  const meta = SOLAR_TERM_META[req.solar_term];
+  let userContent = `都道府県: ${req.prefecture}\n市区町村: ${req.municipality}\n二十四節気: ${meta.name}（${req.solar_term}、${meta.period}）`;
+
+  if (typeof req.wikipediaExtract === 'string' && req.wikipediaExtract.length > 0) {
+    userContent += `\n\n[Wikipedia 抜粋]\n${req.wikipediaExtract}`;
+  }
 
   if (typeof req.regenerationFeedback === 'string' && req.regenerationFeedback.length > 0) {
     userContent += `\n\n[前回の出力で校閲から指摘された箇所]\n${req.regenerationFeedback}\n\n上記の指摘を踏まえ、固有名詞を具体的にし、情緒修飾を避け、事実陳述で書き直してください。`;
