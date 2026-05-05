@@ -1,6 +1,6 @@
 # trip-road タスク一覧
 
-**最終更新**: 2026-05-03（Plan E 全完了、本番反映済、Plan F 計画追加）
+**最終更新**: 2026-05-05（6.8 + F-4 を本番反映 / Plan D 系 24 件分析を 4.17 章に記録 / F-1.3 を最優先・F-3.1 を中優先に格上げ）
 
 ---
 
@@ -226,7 +226,8 @@
 - [x] `public/assets/ui.js` の `setDescription` / `clearDescription` で `#description-loading-text` を `hidden` 化
 - [x] `test/ui_dom.test.js` を新設し、依存追加なしで `globalThis.document` をスタブして DOM 副作用を検証（4 ケース）
 - [x] `docs/knowledge.md` 4.14 章にバグの原因と教訓を記録
-- [ ] **本番反映 + 実機確認（人間タスク）**: Pages 反映後に iPhone で「再生成→本文表示」の遷移で loading-text が消えること、通常生成でも残留しないことを確認
+- [x] 本番反映（2026-05-05、`bash deploy_frontend.sh` で Pages にデプロイ、独自ドメイン HTTP 200 確認）
+- [ ] **実機確認（人間タスク）**: iPhone で「再生成→本文表示」の遷移で loading-text が消えること、通常生成でも残留しないことを確認
 
 ---
 
@@ -237,19 +238,23 @@
 ### F-1（最高優先）: Plan E 補完
 
 実走 1 週間程度で `fetch_entries.sh` の Plan E 集計を観察してから、各サブ項目の優先度を実データで決める。
+**2026-05-05 更新**: Plan D 系 24 件の分析（knowledge.md 4.17 章）で事実誤認 3 件が観測され、Judge 単独では直らない構造であることが判明。**F-1.3 を最優先に格上げ**。
 
+- [ ] **F-1.3（最優先）Haiku 生成側 RAG**: `workers/src/anthropic.js` の system / user prompt に Wikipedia 抜粋を渡し、Haiku が「知らない事実」を書かないよう素材を直接供給する。Judge 軸 1（accuracy）の改善が最大の動機
+- [ ] **F-1.3 補助 system prompt 強化**: 「Wikipedia 抜粋に登場する語句のみ使用、不確実なら省略」を明示（knowledge.md 4.17.4 参照）
 - [ ] **F-1.1 政令市の区対応**: フロント `muni.js` から N03_003（親市名）を抽出して Worker に送信、`workers/src/wikipedia.js` で `${区} (${親市})` 形式の Wikipedia title を構築（spec.md API 仕様改訂を伴う）
-- [ ] **F-1.2 文字数遵守率改善**: `workers/src/anthropic.js` の system prompt を強化（120〜180 字の中央値 150 字を目標、要素を絞ってでも下限を割らない指示）。実走 S3 集計で「文字数 NG 率」を観測しながら調整
-- [ ] **F-1.3 Haiku 知識限界対策**: F-1.1 / F-1.2 後も判定スコアが上がらない場合、Wikipedia 抜粋を Haiku の system / user prompt にも参考情報として渡す（generator にも RAG）か検討
+- [ ] **F-1.2 文字数遵守率改善（様子見）**: 24 件分析では文字数 NG が顕著に観測されず、Plan E entry が溜まってから判断
 
 ### F-2（中優先、データが溜まってから）: 観測強化
 
 - [ ] **F-2.1 Judge スコアと dwell_ms の相関分析**: `docs/analysis/prompts.md` に分析プロンプト追加 + `fetch_entries.sh` の集計に「judge_passed=true / false で dwell_ms 平均が有意差あるか」を追加
 - [ ] **F-2.2 既存キャッシュの遡及評価・無効化スクリプト**: 運用で必要になった時点で
 
-### F-3（低優先、随時）: ユーザー機能拡張
+### F-3（中優先に格上げ）: ユーザー機能拡張
 
-- [ ] **F-3.1 解説の「再生成」ボタン**: ユーザが「いまいち」と感じたとき明示的に再生成、`force_regenerate=true` で Workers がキャッシュ無視
+**2026-05-05 更新**: 24 件分析で「品質低キャッシュが localStorage に固定化」が顕在化（knowledge.md 4.17.2）。F-3.1 を中優先に格上げ。
+
+- [ ] **F-3.1（中優先）解説の「再生成」ボタン**: ユーザが「いまいち」と感じたとき明示的に再生成、フロント側で localStorage キャッシュを無視して新規取得
 - [ ] **F-3.2 道の駅の近隣表示**: 進行方向 ±60°、1200 駅データ（実装規模大、独立 PR 推奨）
 - [ ] **F-3.3 GPX エクスポート**: 軌跡データを GPX 形式でダウンロード（実装規模小）
 
@@ -263,7 +268,8 @@
 - [x] `public/assets/app.js` の `handlePosition` で `wasFirstFix` を保存し、判定に使用
 - [x] `test/should_enter_switch_flow.test.js` 5 ケース（通常切替 / 初回 fix で同一市町村 / null currentCode / 異常入力）
 - [x] `docs/knowledge.md` 4.15 章に経緯と教訓を記録
-- [ ] **本番反映 + 実機確認（人間タスク）**: Pages 反映後、自宅で起動して解説が出ることを確認、別の場所への移動時も従来通り切替されることを確認
+- [x] 本番反映（2026-05-05、6.8 と同じデプロイで併せて反映）
+- [ ] **実機確認（人間タスク）**: 自宅で起動して解説が出ることを確認、別の場所への移動時も従来通り切替されることを確認
 
 副作用: 起動毎に Workers へ 1 リクエスト発生する（合格時はキャッシュされるので次回はキャッシュヒット、不合格時は毎回フェッチが続く）。コスト許容。
 
