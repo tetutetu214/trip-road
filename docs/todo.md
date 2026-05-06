@@ -283,6 +283,75 @@
 
 副作用: 起動毎に Workers へ 1 リクエスト発生する（合格時はキャッシュされるので次回はキャッシュヒット、不合格時は毎回フェッチが続く）。コスト許容。
 
+---
+
+## Plan G: RAG 拡張 + プロンプト緩和（2026-05-06 追加）
+
+詳細は `docs/knowledge.md` の Plan E 観測分析章を参照。
+
+### 背景
+
+Plan E (PR #30) + F-1.3b (PR #34) 反映後の S3 テレメトリ集計（14 件、2026-04-26〜2026-05-06）で **合格率 0/14（92% NG、92% 再生成発生、accuracy 平均 2.63）** という結果。原因は Generator の「抜粋外を書くな」指示と Judge 軸 1 の「Wikipedia 記載なし → 減点」ルールが組み合わさり、RAG over-refusal を起こしていること（一次ソース調査で Anthropic Reduce hallucinations の "External knowledge restriction" が advanced 扱い、デフォルトは "Allow Claude to say I don't know" であることを確認）。
+
+ユーザの原点（旅人が初訪問の街を知る、土地・歴史 + 季節）を保ちつつ **LLM 自動生成のまま品質を上げる** 方針。手作業による解説文の校閲はゼロ。
+
+### G-1（最優先・即効性）: プロンプト緩和
+
+Issue #35。本番反映で当日中に体験改善を狙う暫定対処。
+
+- [ ] `workers/src/anthropic.js` SYSTEM_PROMPT 修正（「Wikipedia 抜粋外を書くな」→「直接矛盾しない範囲で LLM 知識活用可」）
+- [ ] `workers/src/judge_prompts.js` 軸 1 修正（「記載なし → 減点」→「直接矛盾のみ減点」）+ Few-shot 3 パターン化
+- [ ] `workers/src/judge.js` aggregateScores 緩和（軸ごと閾値 4→3、または重み付き合計）
+- [ ] 既存テスト更新
+- [ ] 本番反映、1〜2 週間観測で合格率 30〜50% 改善を確認
+- [ ] ブランチ: `fix/prompt-overrefusal`
+
+### G-2（高優先）: Wikipedia API 取得を全本文に
+
+Issue #36。Generator が引ける固有名詞の在庫を厚くする。
+
+- [ ] `workers/src/wikipedia.js` の `exintro=1` を外し全本文または特定セクション取得
+- [ ] Cache API のサイズ閾値・Workers の CPU/メモリ確認
+- [ ] 既存キャッシュの invalidate 戦略（キー変更 or デプロイ時 flush）
+- [ ] 取得長が intro 比 5 倍以上であることを確認
+- [ ] ブランチ: `feature/wikipedia-full-body`
+
+### G-3（高優先）: Wikidata QID マッピング表
+
+Issue #37。1741 市町村 × QID 表を 1 回だけオフラインで生成。手作業ゼロのバッチ。
+
+- [ ] `preprocess/build_wikidata_qid_map.py` 新設（SPARQL `wdt:P429` で QID 取得）
+- [ ] レート制限（1 req/sec）+ User-Agent 必須
+- [ ] `public/wikidata_qid.json` 出力（≒ 100 KB）
+- [ ] 政令市の区も親市と区別して取得（Issue #15 と同時解消の見込み）
+- [ ] 95% 以上で QID 解決、残りは手動補完または fallback 設計
+- [ ] ブランチ: `feature/wikidata-qid-mapping`
+
+### G-4（高優先）: Wikidata SPARQL を runtime RAG に統合
+
+Issue #38。前 Issue で生成した QID を使い Workers から runtime で属性取得。
+
+- [ ] `workers/src/wikidata.js` 新設（`getCachedWikidataAttributes(qid)`、Cache API 30 日 TTL）
+- [ ] `workers/src/describe_flow.js` で Wikipedia と並列に呼出
+- [ ] `workers/src/anthropic.js` の `buildMessagesRequest` に `wikidataAttributes` 引数追加
+- [ ] `workers/src/judge_prompts.js` 軸 1 を「Wikipedia または Wikidata と直接矛盾」に拡張
+- [ ] 本番反映、特別区での deductions 数の減少を観測
+- [ ] ブランチ: `feature/wikidata-sparql-rag`
+
+### G-5（中優先）: Judge meta-eval セット作成
+
+Issue #39。Judge プロンプト変更時の暴走検出のための校正用データセット。手作業 20-30 件、1 回だけ。
+
+- [ ] `docs/analysis/judge_meta_eval_set.json` 作成（合格 5 / 微妙 8 / NG 7 / 矛盾 5 件）
+- [ ] `workers/test/judge_meta_eval.js` 新設（Judge 呼出 + 誤差レポート）
+- [ ] `docs/analysis/README.md` にプロンプト修正時のワークフロー記載
+
+### G-6（観測 + 判断）
+
+- [ ] G-1〜G-4 反映後 1〜2 週間の観測（`fetch_entries.sh` で軸ごとの分布確認）
+- [ ] 改善が頭打ちなら OSM Overpass POI 取込（Issue 起票は判断後）
+- [ ] さらに必要なら Generator のモデルを Sonnet 4.6 に切替て A/B（Issue 起票は判断後）
+
 ### さらに先（無時系列、検討候補）
 
 - [ ] Service Worker によるオフライン対応
