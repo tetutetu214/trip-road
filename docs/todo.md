@@ -240,14 +240,16 @@
 実走 1 週間程度で `fetch_entries.sh` の Plan E 集計を観察してから、各サブ項目の優先度を実データで決める。
 **2026-05-05 更新**: Plan D 系 24 件の分析（knowledge.md 4.17 章）で事実誤認 3 件が観測され、Judge 単独では直らない構造であることが判明。**F-1.3b を最優先**として実装方針を確定。
 
-- [x] **F-1.3b（最優先）Haiku 生成側 RAG（Wikipedia + 節気期間）** （2026-05-06 実装完了、PR レビュー待ち）:
+- [x] **F-1.3b（最優先）Haiku 生成側 RAG（Wikipedia + 節気期間）** （2026-05-06 実装 + 本番反映 + 動作確認まで完了）:
   - [x] `solar_term_meta.js` 共通モジュール新設（DRY、Generator と Judge から import）
   - [x] `buildMessagesRequest` に `wikipediaExtract` 引数追加、Wikipedia 抜粋セクション + 節気期間を user メッセージに含める
   - [x] system prompt に「Wikipedia 抜粋の使い方」ルールと Few-shot 例（函館市 / 処暑）を追加
   - [x] `describe_flow.js` から `getCachedWikipediaExtract` を呼んで Generator に渡す配線（再生成時も同抜粋を再利用、再取得しない）
   - [x] Wikipedia null / 例外時は抜粋セクション省略で継続
   - [x] テスト追加（anthropic 5 ケース + describe_flow 4 ケース、計 106 全 pass）
-  - [ ] **本番反映 + 観測（人間タスク）**: PR マージ → `wrangler deploy` → 1 週間実走 → `fetch_entries.sh` で軸1/軸2 スコアの変化を観測
+  - [x] PR #34 マージ（`bb3ecab`）、`wrangler deploy` で本番反映
+  - [x] 本番動作確認（横浜市中区 / 立夏で前半の固有情報強化を確認、架空名で 200 通過確認）
+  - [ ] **観測（人間タスク）**: 1 週間ほど実走 → `fetch_entries.sh` で軸1/軸2 スコアの変化を観測（次の判断材料）
 - [ ] **F-1.1 政令市の区対応**: フロント `muni.js` から N03_003（親市名）を抽出して Worker に送信、`workers/src/wikipedia.js` で `${区} (${親市})` 形式の Wikipedia title を構築（spec.md API 仕様改訂を伴う）
 - [ ] **F-1.2 文字数遵守率改善（様子見）**: 24 件分析では文字数 NG が顕著に観測されず、Plan E entry が溜まってから判断
 - [ ] **F-1.3c は当面見送り**: 24 節気それぞれの旬の食材・行事ヒント表を自作する案。24 件分析で軸3（season_fit）が他軸より高いスコアだったため、データで効果が立証されるまで投資しない
