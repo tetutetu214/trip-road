@@ -1,6 +1,6 @@
 # trip-road タスク一覧
 
-**最終更新**: 2026-05-06（F-1.3b 実装完了、PR レビュー待ち）
+**最終更新**: 2026-05-07（G-1 実装完了、PR レビュー待ち）
 
 ---
 
@@ -295,16 +295,20 @@ Plan E (PR #30) + F-1.3b (PR #34) 反映後の S3 テレメトリ集計（14 件
 
 ユーザの原点（旅人が初訪問の街を知る、土地・歴史 + 季節）を保ちつつ **LLM 自動生成のまま品質を上げる** 方針。手作業による解説文の校閲はゼロ。
 
-### G-1（最優先・即効性）: プロンプト緩和
+### G-1（最優先・即効性）: プロンプト緩和（実装完了 2026-05-07、PR レビュー待ち）
 
-Issue #35。本番反映で当日中に体験改善を狙う暫定対処。
+Issue #35。`fix/prompt-overrefusal` ブランチで実装、2 コミット構成。
 
-- [ ] `workers/src/anthropic.js` SYSTEM_PROMPT 修正（「Wikipedia 抜粋外を書くな」→「直接矛盾しない範囲で LLM 知識活用可」）
-- [ ] `workers/src/judge_prompts.js` 軸 1 修正（「記載なし → 減点」→「直接矛盾のみ減点」）+ Few-shot 3 パターン化
-- [ ] `workers/src/judge.js` aggregateScores 緩和（軸ごと閾値 4→3、または重み付き合計）
-- [ ] 既存テスト更新
-- [ ] 本番反映、1〜2 週間観測で合格率 30〜50% 改善を確認
-- [ ] ブランチ: `fix/prompt-overrefusal`
+- [x] `workers/src/anthropic.js` SYSTEM_PROMPT 修正（「資料外禁止」→「直接矛盾しない範囲で LLM 知識活用可」+ 自己放棄文の出力禁止を明示）
+- [x] `workers/src/judge_prompts.js` 軸 1 修正（「記載なし → 減点」→「直接矛盾のみ重く減点、記載なしは減点しない」）+ Few-shot 3 パターン化（5点・整合 / 5点・記載なしだが地理常識として妥当 / 2点・直接矛盾あり）
+- [x] `workers/src/judge.js` `aggregateScores` 重み付き合計化（`0.4×accuracy + 0.2×spec + 0.2×season + 0.2×density ≥ 3.5`）+ `AXIS_WEIGHTS` / `PASS_THRESHOLD` を export
+- [x] 既存テスト更新 + accuracy 重視の効果テスト追加（worker tests 111 → 117 全 pass）
+- [x] `docs/spec.md` 10.3 軸 1 prompt と 10.4 集約ロジックを新仕様に更新
+- [x] `docs/knowledge.md` 4.20 章として実装記録、4.21 章の学習済み概念に「2026-05-07 G-1 着手前テスト」追加
+- [x] ブランチ `fix/prompt-overrefusal` push 完了（2 コミット）
+- [ ] **PR 作成 + てつてつレビュー + main マージ**
+- [ ] **本番反映 (`wrangler deploy`)**
+- [ ] **観測（人間タスク）**: 1〜2 週間の実走 → `fetch_entries.sh` で軸別平均と合格率の推移確認、合格率 30〜50% 改善を Issue #35 完了条件として閉じる
 
 ### G-2（高優先）: Wikipedia API 取得を全本文に
 
