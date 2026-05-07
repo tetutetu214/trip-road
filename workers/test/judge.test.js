@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   JUDGE_MODEL,
+  AXIS_WEIGHTS,
+  PASS_THRESHOLD,
   parseJudgeResponse,
   aggregateScores,
   callJudge,
@@ -79,10 +81,28 @@ describe('parseJudgeResponse', () => {
   });
 });
 
-describe('aggregateScores', () => {
+describe('AXIS_WEIGHTS / PASS_THRESHOLD（G-1）', () => {
+  it('AXIS_WEIGHTS の合計が 1.0 で、accuracy が 0.4 で最大', () => {
+    const total =
+      AXIS_WEIGHTS.accuracy +
+      AXIS_WEIGHTS.specificity +
+      AXIS_WEIGHTS.season_fit +
+      AXIS_WEIGHTS.density;
+    expect(total).toBeCloseTo(1.0, 6);
+    expect(AXIS_WEIGHTS.accuracy).toBeGreaterThan(AXIS_WEIGHTS.specificity);
+    expect(AXIS_WEIGHTS.accuracy).toBeGreaterThan(AXIS_WEIGHTS.season_fit);
+    expect(AXIS_WEIGHTS.accuracy).toBeGreaterThan(AXIS_WEIGHTS.density);
+  });
+
+  it('PASS_THRESHOLD は 3.5（5段階の中央 3 と模範 4 の中間）', () => {
+    expect(PASS_THRESHOLD).toBe(3.5);
+  });
+});
+
+describe('aggregateScores（G-1: 重み付き合計）', () => {
   const ds = (s) => ({ score: s, deductions: [], notes: '' });
 
-  it('全軸 score>=4 なら passed=true', () => {
+  it('全軸 5,4,5,4 → 重み付き 4.6 で passed=true', () => {
     const result = aggregateScores({
       accuracy: ds(5),
       specificity: ds(4),
@@ -93,28 +113,7 @@ describe('aggregateScores', () => {
     expect(result.scores).toEqual({ accuracy: 5, specificity: 4, season_fit: 5, density: 4 });
   });
 
-  it('1 軸が 3 点だと passed=false', () => {
-    const result = aggregateScores({
-      accuracy: ds(5),
-      specificity: ds(3),
-      season_fit: ds(5),
-      density: ds(5),
-    });
-    expect(result.passed).toBe(false);
-    expect(result.scores.specificity).toBe(3);
-  });
-
-  it('1 軸が score=null（パース失敗）だと passed=null（fail-open）', () => {
-    const result = aggregateScores({
-      accuracy: ds(5),
-      specificity: { score: null, deductions: [], notes: '' },
-      season_fit: ds(5),
-      density: ds(5),
-    });
-    expect(result.passed).toBeNull();
-  });
-
-  it('全軸 score=4 ぴったりでも passed=true', () => {
+  it('全軸 4 ぴったりで重み付き 4.0 → passed=true', () => {
     const result = aggregateScores({
       accuracy: ds(4),
       specificity: ds(4),
@@ -122,6 +121,59 @@ describe('aggregateScores', () => {
       density: ds(4),
     });
     expect(result.passed).toBe(true);
+  });
+
+  it('accuracy=2 でも他 3 軸 5 点なら重み付き 3.8 → passed=true（重み付きの効果）', () => {
+    const result = aggregateScores({
+      accuracy: ds(2),
+      specificity: ds(5),
+      season_fit: ds(5),
+      density: ds(5),
+    });
+    expect(result.passed).toBe(true);
+    expect(result.scores.accuracy).toBe(2);
+  });
+
+  it('specificity=3 でも他 3 軸 5 点なら重み付き 4.6 → passed=true', () => {
+    const result = aggregateScores({
+      accuracy: ds(5),
+      specificity: ds(3),
+      season_fit: ds(5),
+      density: ds(5),
+    });
+    expect(result.passed).toBe(true);
+    expect(result.scores.specificity).toBe(3);
+  });
+
+  it('全軸 3 で重み付き 3.0 → passed=false（閾値 3.5 未満）', () => {
+    const result = aggregateScores({
+      accuracy: ds(3),
+      specificity: ds(3),
+      season_fit: ds(3),
+      density: ds(3),
+    });
+    expect(result.passed).toBe(false);
+  });
+
+  it('accuracy=1 で他軸 5 でも重み付き 3.4 → passed=false（accuracy 重視の効果）', () => {
+    const result = aggregateScores({
+      accuracy: ds(1),
+      specificity: ds(5),
+      season_fit: ds(5),
+      density: ds(5),
+    });
+    expect(result.passed).toBe(false);
+  });
+
+  it('1 軸が score=null（パース失敗）だと passed=null（fail-open）、scores も null', () => {
+    const result = aggregateScores({
+      accuracy: ds(5),
+      specificity: { score: null, deductions: [], notes: '' },
+      season_fit: ds(5),
+      density: ds(5),
+    });
+    expect(result.passed).toBeNull();
+    expect(result.scores).toBeNull();
   });
 });
 
@@ -232,7 +284,24 @@ describe('judgeAll', () => {
     expect(factualityWikiSeen).toContain('相模原市を構成する3行政区');
   });
 
-  it('1 軸 NG → passed=false、scores と deductions は返る', async () => {
+  it('重み付き合計 < 3.5 → passed=false、scores と deductions は返る（G-1）', async () => {
+    const result = await judgeAll({
+      description: SAMPLE_PARAMS.description,
+      prefecture: SAMPLE_PARAMS.prefecture,
+      municipality: SAMPLE_PARAMS.municipality,
+      solarTerm: SAMPLE_PARAMS.solarTerm,
+      env,
+      wikipediaFetcher: async () => null,
+      // 0.4*2 + 0.2*2 + 0.2*4 + 0.2*2 = 2.4 < 3.5 → false
+      judgeRunner: makeJudgeRunner({ accuracy: 2, specificity: 2, season_fit: 4, density: 2 }),
+    });
+    expect(result.passed).toBe(false);
+    expect(result.lengthOk).toBe(true);
+    expect(result.scores.accuracy).toBe(2);
+    expect(result.error).toBeNull();
+  });
+
+  it('accuracy=2 でも他軸 5 なら重み付き 3.8 ≥ 3.5 → passed=true（G-1 の緩和効果）', async () => {
     const result = await judgeAll({
       description: SAMPLE_PARAMS.description,
       prefecture: SAMPLE_PARAMS.prefecture,
@@ -242,10 +311,9 @@ describe('judgeAll', () => {
       wikipediaFetcher: async () => null,
       judgeRunner: makeJudgeRunner({ accuracy: 2, specificity: 5, season_fit: 5, density: 5 }),
     });
-    expect(result.passed).toBe(false);
+    expect(result.passed).toBe(true);
     expect(result.lengthOk).toBe(true);
     expect(result.scores.accuracy).toBe(2);
-    expect(result.error).toBeNull();
   });
 
   it('judgeRunner 例外なら fail-open（passed=null, error 設定）', async () => {
