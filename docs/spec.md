@@ -757,24 +757,30 @@ Wikipedia の Etiquette として User-Agent 必須。
 - 1: 全面的に問題
 ```
 
-#### 軸 1: 事実正確性 prompt（差分）
+#### 軸 1: 事実正確性 prompt（差分、G-1 で緩和）
+
+G-1（Issue #35）で「Wikipedia 記載なし → 減点」を「直接矛盾のみ重く減点、記載なしは減点しない」に緩和。Few-shot を 2 → 3 パターン化（5点・整合 / 5点・記載なしだが地理常識として妥当 / 2点・直接矛盾あり）。RAG over-refusal の解消が目的。
 
 ```
-【観点】 地理・歴史・地形に関する記述が、以下の Wikipedia 抜粋と照合して事実誤認や根拠なき記述になっていないか。
-（Wikipedia に明記されていない事項は「根拠なし」とみなし減点。Wikipedia と直接矛盾する記述はより重く減点。）
+【観点】 地理・歴史・地形に関する記述が、以下の Wikipedia 抜粋と直接矛盾していないか。
+（Wikipedia と直接矛盾する記述は重く減点する。Wikipedia に記載がないだけの事項は減点しない。地理常識として明らかに誤り——例: 内陸の市町村に「太平洋に面した港町」、山地の市町村に「平坦な臨海工業地帯」——の場合のみ減点する。）
 
 【Wikipedia 抜粋】
 {wikipedia_extract}
 
 【Few-shot 例】
 
-例A（5点想定）:
+例A（5点想定、Wikipedia と整合）:
 解説:「緑区は津久井湖と相模湖を抱える山岳地帯。標高1,673mの蛭ヶ岳（神奈川県最高峰）が区西部にそびえ、江戸期は甲州街道の宿場町として賑わった。」
 → 出力: {"deductions": [], "score": 5, "notes": "Wikipediaと整合"}
 
-例B（2点想定）:
+例B（5点想定、Wikipedia 記載なしだが地理常識として妥当）:
+解説:「世田谷区は東京都の南西部に位置し、多摩川が区の南端を流れます。住宅地が広く、農地もわずかに残ります。」
+→ 出力: {"deductions": [], "score": 5, "notes": "Wikipedia 抜粋に多摩川や住宅地の言及がなくても、地理常識として整合している。記載なしは減点対象外"}
+
+例C（2点想定、直接矛盾あり）:
 解説:「相模原市緑区は江戸時代の城下町として栄え、武家屋敷の街並みが今も残る。」
-→ 出力: {"deductions": ["江戸時代の城下町として栄え（Wikipediaに記載なし、緑区は城下町ではない）", "武家屋敷の街並み（同上、根拠なし）"], "score": 2, "notes": "城下町という根拠不明な前提が複数文にわたる"}
+→ 出力: {"deductions": ["江戸時代の城下町として栄え（Wikipedia には宿場町として記載されており直接矛盾）", "武家屋敷の街並み（同上、宿場町と矛盾）"], "score": 2, "notes": "Wikipedia の宿場町という記述と直接矛盾"}
 
 ではこの解説本文を採点してください。
 ```
@@ -868,7 +874,15 @@ async function judgeAll({ description, prefecture, municipality, solarTerm, env 
       callJudge("density", { description, prefecture, municipality, solarTerm }, env),
     ]);
 
-    const passed = [accuracy, specificity, seasonFit, density].every(j => j.score >= 4);
+    // G-1（Issue #35）: 全軸 ≥4 AND は独立事象の AND 結合で合格率が p^N に圧縮される問題（各軸 70% でも全体 24%）があったため、重み付き合計に切替。
+    const AXIS_WEIGHTS = { accuracy: 0.4, specificity: 0.2, season_fit: 0.2, density: 0.2 };
+    const PASS_THRESHOLD = 3.5;
+    const weighted =
+      AXIS_WEIGHTS.accuracy * accuracy.score +
+      AXIS_WEIGHTS.specificity * specificity.score +
+      AXIS_WEIGHTS.season_fit * seasonFit.score +
+      AXIS_WEIGHTS.density * density.score;
+    const passed = weighted >= PASS_THRESHOLD;
     return {
       passed,
       scores: { accuracy: accuracy.score, specificity: specificity.score, season_fit: seasonFit.score, density: density.score },
@@ -885,6 +899,8 @@ async function judgeAll({ description, prefecture, municipality, solarTerm, env 
 - `error !== null` → fail-open（呼び出し側で生成のみ表示・キャッシュなし）
 - `passed === true` → キャッシュ書込
 - `passed === false` → 再生成へ（上限 2 回）
+
+**G-1 合格基準の意図**: accuracy 0.4 / specificity 0.2 / season_fit 0.2 / density 0.2 はてつてつの原点（旅人が初訪問の街を知る、土地・歴史 + 季節）に対し accuracy を最重視するための重み付け。閾値 3.5 は 5 段階の中央 3 と模範 4 の中間。weighted 値そのものは API レスポンスや S3 entry スキーマに含めず、観測には `fetch_entries.sh` 側で `AXIS_WEIGHTS` を再適用して再計算する。
 
 #### 再生成時のフィードバック注入（Phase 6.4d 追加）
 

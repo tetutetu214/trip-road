@@ -45,6 +45,23 @@ const AXIS_PROMPT_BUILDERS = {
 // 評価対象の軸（順序固定）
 const ALL_AXES = ['accuracy', 'specificity', 'season_fit', 'density'];
 
+/**
+ * G-1 で全軸 ≥4 AND を重み付き合計 ≥ PASS_THRESHOLD に切り替えた。
+ *
+ * 旧ロジック（全軸 AND）は独立事象の AND 結合 p^N で合格率を圧縮し、
+ * 各軸 70% でも全体 24% に落ちる構造的な問題があった（knowledge.md 4.19）。
+ * てつてつの原点（土地・歴史 + 季節）に対し accuracy を最重視（0.4）、
+ * 残り 3 軸を 0.2 ずつに置く。
+ */
+export const AXIS_WEIGHTS = {
+  accuracy: 0.4,
+  specificity: 0.2,
+  season_fit: 0.2,
+  density: 0.2,
+};
+
+export const PASS_THRESHOLD = 3.5;
+
 // ---- 純粋関数 ----
 
 /**
@@ -84,10 +101,14 @@ export function parseJudgeResponse(text) {
 /**
  * 4 軸の judge 結果を集約。
  *
- * passed の決定:
+ * passed の決定（G-1 以降、重み付き合計）:
  *   - いずれかの軸で score=null（パース失敗・リトライ全敗）→ null（fail-open）
- *   - 全軸 score>=4 → true
- *   - いずれかの軸で score<4 → false
+ *   - 重み付き合計 weighted = Σ AXIS_WEIGHTS[axis] * scores[axis] が
+ *     PASS_THRESHOLD（3.5）以上なら true、未満なら false
+ *
+ * 戻り値の形式は呼び出し側互換のため {passed, scores, deductions} を維持。
+ * weighted 値そのものは公開せず、観測には fetch_entries.sh 側で再計算する
+ * （AXIS_WEIGHTS / PASS_THRESHOLD は export 済）。
  *
  * @param {Record<string, {score: number|null, deductions: string[], notes: string}>} judgments
  *        キーは accuracy / specificity / season_fit / density
@@ -97,7 +118,6 @@ export function aggregateScores(judgments) {
   const scores = {};
   const deductions = {};
   let hasNull = false;
-  let allPassed = true;
 
   for (const axis of ALL_AXES) {
     const j = judgments[axis];
@@ -105,19 +125,23 @@ export function aggregateScores(judgments) {
     deductions[axis] = j?.deductions ?? [];
     if (j?.score === null || j?.score === undefined) {
       hasNull = true;
-    } else if (j.score < 4) {
-      allPassed = false;
     }
   }
 
-  let passed;
   if (hasNull) {
-    passed = null;
-  } else {
-    passed = allPassed;
+    return { passed: null, scores: null, deductions };
   }
 
-  return { passed, scores: hasNull ? null : scores, deductions };
+  let weighted = 0;
+  for (const axis of ALL_AXES) {
+    weighted += AXIS_WEIGHTS[axis] * scores[axis];
+  }
+
+  return {
+    passed: weighted >= PASS_THRESHOLD,
+    scores,
+    deductions,
+  };
 }
 
 // ---- 副作用ありの統合関数 ----

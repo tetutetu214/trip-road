@@ -68,7 +68,7 @@ describe('buildCommonPreamble', () => {
 });
 
 describe('buildFactualityPrompt（軸 1）', () => {
-  it('共通プリアンブル + 観点 + Wikipedia 抜粋 + Few-shot を含む', () => {
+  it('共通プリアンブル + 観点 + Wikipedia 抜粋 + Few-shot 3 パターンを含む（G-1）', () => {
     const text = buildFactualityPrompt({
       ...SAMPLE_INPUT,
       wikipediaExtract: '相模原市緑区は、相模原市を構成する3行政区のうちの一つである。',
@@ -76,9 +76,31 @@ describe('buildFactualityPrompt（軸 1）', () => {
     expect(text).toContain('相模原市緑区'); // プリアンブル経由
     expect(text).toContain('Wikipedia');
     expect(text).toContain('相模原市を構成する3行政区'); // 抜粋本文
-    expect(text).toContain('蛭ヶ岳'); // Few-shot 例 A
-    expect(text).toContain('武家屋敷'); // Few-shot 例 B
+    expect(text).toContain('蛭ヶ岳'); // Few-shot 例 A（5点・整合）
+    expect(text).toContain('多摩川'); // Few-shot 例 B（5点・記載なしだが地理常識として妥当）
+    expect(text).toContain('武家屋敷'); // Few-shot 例 C（2点・直接矛盾）
     expect(text).toMatch(/採点|採点してください/);
+  });
+
+  it('観点が「直接矛盾のみ重く減点、記載なしは減点しない」に緩和されている（G-1）', () => {
+    const text = buildFactualityPrompt({
+      ...SAMPLE_INPUT,
+      wikipediaExtract: '相模原市緑区は、相模原市を構成する3行政区のうちの一つである。',
+    });
+    expect(text).toContain('直接矛盾');
+    expect(text).toContain('記載がないだけの事項は減点しない');
+    // 旧 over-refusal ルール（G-1 で削除）が消えていること
+    expect(text).not.toContain('明記されていない事項は「根拠なし」とみなし減点');
+  });
+
+  it('Few-shot 例 B（記載なしだが地理常識として妥当）が 5 点想定で含まれる（G-1）', () => {
+    const text = buildFactualityPrompt({
+      ...SAMPLE_INPUT,
+      wikipediaExtract: '相模原市緑区は、相模原市を構成する3行政区のうちの一つである。',
+    });
+    expect(text).toMatch(/例B[(（]5点想定/);
+    expect(text).toContain('地理常識として整合');
+    expect(text).toContain('減点対象外');
   });
 
   it('wikipediaExtract が null のときは「情報なし」差し替え + 保守的評価指示', () => {
