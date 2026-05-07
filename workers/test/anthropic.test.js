@@ -128,6 +128,38 @@ describe('buildMessagesRequest', () => {
     expect(req.system).toContain('そのまま引用');
   });
 
+  it('system prompt が「Wikipedia と直接矛盾しない範囲で LLM 知識を活用可」を明示する（G-1）', () => {
+    const req = buildMessagesRequest({
+      prefecture: '神奈川県',
+      municipality: '相模原市緑区',
+      solar_term: '05',
+    });
+    expect(req.system).toContain('直接矛盾しない範囲');
+    expect(req.system).toContain('地理常識');
+    // 旧文言（G-1 で削除した over-refusal 誘発フレーズ）が消えていること
+    expect(req.system).not.toContain('確信があるものだけ書く。曖昧な記憶で捻り出さない。情報量より正確さ');
+    expect(req.system).not.toContain('抜粋に書かれていない地名・河川名・歴史的事実は、確信があるものだけ書く');
+  });
+
+  it('system prompt が自己放棄文・謝罪文の出力を禁じる（G-1）', () => {
+    const req = buildMessagesRequest({
+      prefecture: '神奈川県',
+      municipality: '相模原市緑区',
+      solar_term: '05',
+    });
+    expect(req.system).toContain('これ以上の詳述は控えます');
+    expect(req.system).toMatch(/自己放棄|謝罪/);
+  });
+
+  it('system prompt が季節情報を LLM の一般知識で書いてよい旨を明示する（G-1）', () => {
+    const req = buildMessagesRequest({
+      prefecture: '神奈川県',
+      municipality: '相模原市緑区',
+      solar_term: '05',
+    });
+    expect(req.system).toMatch(/季節情報は LLM の一般知識/);
+  });
+
   it('wikipediaExtract ありの場合、user content に [Wikipedia 抜粋] セクションが入る（F-1.3b）', () => {
     const extract =
       '相模原市は、神奈川県北部に位置する政令指定都市である。市域は緑区・中央区・南区の 3 区に分かれる。';
