@@ -14,7 +14,8 @@ if [ ! -f "$SRC" ]; then
 fi
 source "$SRC"
 
-ALLOWED_ORIGIN_PROD="https://trip-road.pages.dev"
+# 本番フロントは独自ドメイン（update_allowed_origin.sh と整合）
+ALLOWED_ORIGIN_PROD="https://trip-road.tetutetu214.com"
 
 echo "=== 1. Workers Secrets 登録（既存なら上書き） ==="
 echo ""
