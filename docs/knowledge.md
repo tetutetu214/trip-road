@@ -1229,6 +1229,52 @@ LLM 自動生成を保ったまま品質を上げる。手作業による解説�
 
 ---
 
+## 4.22 Plan H 起案と AWS ベストプラクティス調査（2026-05-08）
+
+### 4.22.1 起案の決め手
+
+- 2026-05-08 の S3 テレメトリ集計（Plan E 対象 18 件、期間 2026-04-26〜2026-05-07）で合格率 0/18、accuracy 平均 2.56、specificity 平均 2.67、density 平均 2.67、season_fit のみ 4.22
+- G-1（プロンプト緩和、2026-05-07 反映）後のデータがほぼゼロのため G-1 単独効果は未評価。にもかかわらずユーザー判断で「現状実用に耐えない」と判定し、Plan G の RAG 拡張投資（G-2/G-3/G-4）より先に LLM 自体の切替（Plan H）を選んだ
+- ユーザーが Generator + Judge 両方を Nova Pro に切替える選択をしたのは、Anthropic API キー撤廃・AWS 認証一本化・Judge コスト削減（Sonnet 4.6 入力 $3/出力 $15 → Nova Pro 入力 $0.80/出力 $3.20、約 1/3）の運用メリットを優先した判断。self-preference bias（Nova が Nova を甘く採点）のリスクは「現状より明らかに良く見える / 悪く見える」の二値判定で割り切り、最終ゲートは人間の実走体験
+
+### 4.22.2 AWS Bedrock ベストプラクティスから採用した方針
+
+`aws-core:amazon-bedrock` スキルを参照して以下を採用：
+
+- **cross-region inference profile を使う**: 単一 base model ARN（`amazon.nova-pro-v1:0`）ではなく、`us.amazon.nova-pro-v1:0`（us-east-1 / us-west-2 / us-east-2 自動分散）を採用。Bedrock スキルでは「`us.` プレフィックス profile 使用が推奨、高スループット・障害耐性、データは US 内に滞在」とされており、PoC スケールでも将来の throttle 耐性のために最初から profile を採用
+- **`maxTokens` は必ず明示**: Bedrock スキルの Critical Warning に「未設定はモデル最大値（例: Claude Sonnet で 64K）を quota 予約 → ThrottlingException の主因」と明記。Nova Pro でも同様。Generator 200 / Judge 1024 を目安にコード実装で必ず設定
+- **Converse API を使う（InvokeModel ではなく）**: Bedrock 全モデル統一形式、provider-specific body format の罠を回避（Anthropic ≠ Titan ≠ Llama ≠ Nova で InvokeModel body 形式が異なり Malformed input request が出やすい）
+- **`bedrock:InvokeModel` の Resource を ARN で限定**: `bedrock:*` や `AmazonBedrockFullAccess` は禁止。最小権限で profile ARN + 3 リージョンの base model ARN を列挙（cross-region inference では profile が選んだリージョンで base model 呼出が発生するため両方の許可が必要、片方欠けると AccessDeniedException）
+- **CloudTrail で Bedrock API 呼出を監査**: 2026-05-08 に Control Tower の `aws-controltower-BaselineCloudTrail` で multi-region・global service events 含む形で既に有効を確認、追加設定不要
+- **Bedrock Model Invocation Logging（CloudWatch / S3 詳細ログ）は OFF で出発**: 既存の S3 テレメトリで運用上のニーズはカバー、必要になれば後付け
+
+### 4.22.3 ベストプラクティスからの妥協（明示）
+
+- AWS 公式は **IAM ロールを推奨**（IAM ユーザー長期キーは非推奨）。Cloudflare Workers のような AWS 外環境では本来 OIDC + `sts:AssumeRoleWithWebIdentity` での短期トークン化が望ましい。trip-road は PoC 個人利用なので IAM ユーザー継続、将来課題として todo に記録（既存 S3 アクセスでも同じ妥協を踏襲）
+- アクセスキーローテーションも継続未着手、将来課題
+
+### 4.22.4 Bedrock コンソールでのモデルアクセス申請が不要だった件
+
+- 当初の Plan H では「H-2: Bedrock コンソールで Nova Pro モデルアクセス申請・有効化（手作業）」を含めていた
+- 2026-05-08 に CLI 確認で `amazon.nova-pro-v1:0` および `us.amazon.nova-pro-v1:0` ともに ACTIVE、申請なしで `aws bedrock-runtime converse` が成功（admin 権限の `tetutetu` ユーザー認証で）
+- Anthropic Claude や Meta Llama などサードパーティモデルは EULA 合意が必要だが、Amazon の自社モデル（Nova / Titan）は申請不要で即利用可能というのが確認できた知見
+- 教訓: Bedrock のモデルアクセス申請の要否は「モデル提供者が AWS 自身か否か」で大きく違う。次に他社モデルを使うときは申請ステップを忘れない
+
+### 4.22.5 H-1 IAM ポリシー追加のハマりどころ予防メモ
+
+- IAM ポリシーは即時反映ではなく **eventual consistency**。put-user-policy 直後に Bedrock を叩くと AccessDeniedException が出る場合あり、数秒〜数十秒の伝播遅延を見越す
+- inference profile を使うときは profile ARN 単体では足りず、profile が転送する各リージョンの base model ARN も Resource に含める必要がある（Bedrock スキルの「Cross-region model not found」関連で類似の罠が記載されている）
+- IAM ポリシー JSON に Account ID が含まれるが、`~/.claude/CLAUDE.md` ルールで「AWS識別情報をdocsに書かない」のため docs/ には `${ACCOUNT_ID}` 表記で残し、コマンド実行時に `aws sts get-caller-identity` で動的取得（Account ID 自体は `~/.secrets/` 配下に保存）
+
+### 4.22.6 H-1 完了時の動作確認結果
+
+- 2026-05-08 に Workers IAM 認証（`trip-road-telemetry-writer`）で Bedrock Converse API 呼出に成功
+- modelId: `us.amazon.nova-pro-v1:0`、入力 32 token / 出力 166 token、レイテンシ 2068 ms
+- 出力: 「処暑の頃の小田原市」のテーマで日本語生成 OK、現状仕様の 120-180 字よりやや長め（200 字程度）→ プロンプト調整で吸収する余地あり、これは H-6 でやる
+- 日本語生成品質の所感: 固有名詞（相模湾、小田原城、鈴廣かまぼこの里、城下町）を Wikipedia 抜粋なしでも自然に挿入できており、Plan G の RAG 拡張なしでも accuracy が改善する可能性が見えた
+
+---
+
 ## 5. 参考資料
 
 ### 5.1 使用データ・API

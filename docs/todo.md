@@ -369,10 +369,10 @@ Issue #39。Judge プロンプト変更時の暴走検出のための校正用�
 
 ### H-1: AWS 側準備（CLI で完結、てつてつ手作業不要）
 
-- [ ] **H-1**: 既存 IAM ユーザー `trip-road-telemetry-writer` に新規インラインポリシー `TripRoadBedrockInvokePolicy` を追加（CLI で `aws iam put-user-policy`）
+- [x] **H-1**: 既存 IAM ユーザー `trip-road-telemetry-writer` に新規インラインポリシー `TripRoadBedrockInvokePolicy` を追加（2026-05-08 完了）
   - Action: `bedrock:InvokeModel` のみ（ストリーミング不要、`InvokeModelWithResponseStream` 不要）
   - Resource: `us.amazon.nova-pro-v1:0` profile ARN + 3 リージョン（us-east-1 / us-west-2 / us-east-2）の base model ARN を列挙（cross-region inference の必須セット、片方欠けると AccessDeniedException）
-  - Account ID は `aws sts get-caller-identity` で動的取得（docs に書かない）
+  - 動作確認: Workers IAM 認証で `us.amazon.nova-pro-v1:0` 経由の Converse API 日本語生成成功、レイテンシ 約 2 秒（処暑×小田原市プロンプトで 166 出力 token）
   - 既存 `TripRoadTelemetryWritePolicy`（S3 用）は触らず責務を分離
 
 旧 **H-2（Bedrock コンソールでモデルアクセス申請）は削除**: Nova Pro v1 は申請なしで使用可能、2026-05-08 にアクセス可能を確認済。
