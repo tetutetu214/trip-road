@@ -1,6 +1,6 @@
 import { timingSafeEqual } from './auth.js';
 import { corsHeaders, handlePreflight } from './cors.js';
-import { parseDescribeRequest } from './anthropic.js';
+import { parseDescribeRequest } from './nova.js';
 import { generateAndJudge } from './describe_flow.js';
 import { putToS3, generateS3Key } from './aws.js';
 

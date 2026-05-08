@@ -12,7 +12,7 @@
  * を参照。実装上の判断は docs/knowledge.md 4.11 / 4.18 章を参照。
  */
 
-import { buildMessagesRequest, callAnthropic } from './anthropic.js';
+import { buildGeneratorRequest, callNovaGenerator } from './nova.js';
 import { judgeAll } from './judge.js';
 import { getCachedWikipediaExtract } from './wikipedia.js';
 
@@ -79,7 +79,7 @@ export function formatDeductionsForFeedback(deductions) {
  * >}
  */
 export async function generateAndJudge(parsed, env, deps = {}) {
-  const generator = deps.generator ?? callAnthropic;
+  const generator = deps.generator ?? callNovaGenerator;
   const judger = deps.judger ?? judgeAll;
   const fetchFn = deps.fetchFn ?? fetch;
   const wikipediaFetcher = deps.wikipediaFetcher ?? getCachedWikipediaExtract;
@@ -99,10 +99,10 @@ export async function generateAndJudge(parsed, env, deps = {}) {
     wikipediaExtract = null;
   }
 
-  const messagesReq = buildMessagesRequest({ ...parsed, wikipediaExtract });
+  const messagesReq = buildGeneratorRequest({ ...parsed, wikipediaExtract });
 
   // 1 回目生成
-  const gen1 = await generator(messagesReq, env.ANTHROPIC_API_KEY);
+  const gen1 = await generator(messagesReq, env);
   if (!gen1.ok) {
     return { ok: false, status: gen1.status, detail: gen1.detail };
   }
@@ -148,12 +148,12 @@ export async function generateAndJudge(parsed, env, deps = {}) {
   // 「同じ失敗を繰り返さない」よう Haiku に文脈を伝える。
   // F-1.3b: Wikipedia 抜粋は 1 回目と同じものを再利用（同じ市町村なので変わらない）。
   const feedback = formatDeductionsForFeedback(judge1.deductions);
-  const messagesReq2 = buildMessagesRequest({
+  const messagesReq2 = buildGeneratorRequest({
     ...parsed,
     wikipediaExtract,
     regenerationFeedback: feedback,
   });
-  const gen2 = await generator(messagesReq2, env.ANTHROPIC_API_KEY);
+  const gen2 = await generator(messagesReq2, env);
   if (!gen2.ok) {
     // 再生成エラー → 1 回目を返す（採用試行は 1 回のままなので regenerated=false）
     return {

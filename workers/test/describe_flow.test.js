@@ -7,7 +7,7 @@ const PARSED = {
   solar_term: '05',
 };
 
-const ENV = { ANTHROPIC_API_KEY: 'sk-test' };
+const ENV = { AWS_ACCESS_KEY_ID: 'AKIAEXAMPLE', AWS_SECRET_ACCESS_KEY: 'examplesecret' };
 
 const SAMPLE_DESC_1 =
   '相模原市緑区は、神奈川県北部の山岳地帯に位置します。津久井湖と相模湖を抱え、蛭ヶ岳（神奈川県最高峰）が西部にそびえる丹沢山地の一部です。江戸期は甲州街道の小原宿や与瀬宿が置かれ、養蚕業や林業が栄えました。清明の頃は津久井湖でヤマザクラが見頃。';
@@ -207,10 +207,10 @@ describe('generateAndJudge', () => {
     expect(generatorCalls).toHaveLength(2);
 
     // 1 回目はフィードバックなし（プレーンな user content）
-    expect(generatorCalls[0].messages[0].content).not.toContain('指摘');
+    expect(generatorCalls[0].messages[0].content[0].text).not.toContain('指摘');
 
     // 2 回目は judge1 の deductions が feedback として含まれている
-    const secondUserContent = generatorCalls[1].messages[0].content;
+    const secondUserContent = generatorCalls[1].messages[0].content[0].text;
     expect(secondUserContent).toContain('指摘');
     expect(secondUserContent).toContain('桜が美しい（汎用）');
     expect(secondUserContent).toContain('自然豊かな景観（汎用）');
@@ -238,7 +238,7 @@ describe('generateAndJudge', () => {
 
     expect(result.ok).toBe(true);
     expect(generatorCalls).toHaveLength(1);
-    const userContent = generatorCalls[0].messages[0].content;
+    const userContent = generatorCalls[0].messages[0].content[0].text;
     expect(userContent).toContain('[Wikipedia 抜粋]');
     expect(userContent).toContain('政令指定都市');
   });
@@ -263,7 +263,7 @@ describe('generateAndJudge', () => {
       wikipediaFetcher: NULL_WIKIPEDIA_FETCHER,
     });
 
-    const userContent = generatorCalls[0].messages[0].content;
+    const userContent = generatorCalls[0].messages[0].content[0].text;
     expect(userContent).not.toContain('[Wikipedia 抜粋]');
   });
 
@@ -298,12 +298,12 @@ describe('generateAndJudge', () => {
     expect(fetchCalls).toBe(1); // 再生成時は再取得しない
     expect(generatorCalls).toHaveLength(2);
     // 1 回目に Wikipedia 抜粋
-    expect(generatorCalls[0].messages[0].content).toContain('[Wikipedia 抜粋]');
-    expect(generatorCalls[0].messages[0].content).toContain('神奈川県中部');
+    expect(generatorCalls[0].messages[0].content[0].text).toContain('[Wikipedia 抜粋]');
+    expect(generatorCalls[0].messages[0].content[0].text).toContain('神奈川県中部');
     // 2 回目にも同じ Wikipedia 抜粋 + 再生成 feedback
-    expect(generatorCalls[1].messages[0].content).toContain('[Wikipedia 抜粋]');
-    expect(generatorCalls[1].messages[0].content).toContain('神奈川県中部');
-    expect(generatorCalls[1].messages[0].content).toContain('指摘');
+    expect(generatorCalls[1].messages[0].content[0].text).toContain('[Wikipedia 抜粋]');
+    expect(generatorCalls[1].messages[0].content[0].text).toContain('神奈川県中部');
+    expect(generatorCalls[1].messages[0].content[0].text).toContain('指摘');
   });
 
   it('F-1.3b: wikipediaFetcher が例外を投げた場合、null 扱いで継続する', async () => {
@@ -314,7 +314,7 @@ describe('generateAndJudge', () => {
     const generator = async (messagesReq) => {
       genCalls++;
       // 抜粋セクションが入っていないことも検証
-      expect(messagesReq.messages[0].content).not.toContain('[Wikipedia 抜粋]');
+      expect(messagesReq.messages[0].content[0].text).not.toContain('[Wikipedia 抜粋]');
       return { ok: true, description: SAMPLE_DESC_1 };
     };
     const judger = async () => ({
