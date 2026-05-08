@@ -1,6 +1,6 @@
 # trip-road タスク一覧
 
-**最終更新**: 2026-05-09（Plan H の H-1〜H-5/H-7/H-8/H-9/H-10 完了、`feature/nova-migration` ブランチで PR 待ち）
+**最終更新**: 2026-05-09（Plan H 本番反映完了。H-1〜H-5/H-7/H-8/H-9/H-10/H-11 完了、H-12 観測フェーズ開始。H-6 プロンプト再チューンは観測判断で保留）
 
 ---
 
@@ -386,8 +386,7 @@ Issue #39。Judge プロンプト変更時の暴走検出のための校正用�
   - 現状は Anthropic 向けプロンプトを Converse 形式にそのまま移植（`system` を配列に、Few-shot は維持）
   - 本番反映後の観測（accuracy / specificity / density のスコア推移）次第で再チューンを判断
   - G-1 のプロンプト緩和方針（直接矛盾のみ重く減点・自己放棄禁止）は維持済み
-- [x] **H-7（コード側）** (2026-05-08, `1709c78`): `anthropic.js` / `anthropic.test.js` を削除（責務は nova.js に移管）
-  - 残: `wrangler secret delete ANTHROPIC_API_KEY` は本番反映（H-11）後に実施
+- [x] **H-7** (2026-05-08〜09): `anthropic.js` / `anthropic.test.js` を削除（責務は nova.js に移管、`1709c78`）。`wrangler secret delete ANTHROPIC_API_KEY` も本番反映直後に実施（2026-05-09）、Workers Secrets は APP_PASSWORD / AWS_*（3 種）/ S3_TELEMETRY_BUCKET / ALLOWED_ORIGIN の 6 種に整理
 
 ### H-8: テスト整備
 
@@ -409,17 +408,22 @@ Issue #39。Judge プロンプト変更時の暴走検出のための校正用�
   - `docs/spec.md`: 5.4 / 5.6 / 6.3 / 10.5 / 10.6 / 10.8 を Plan H 構成に更新（Anthropic Messages → Bedrock Converse、Sonnet judge → Nova judge、`generator_model` / `judge_model` 追加）
   - `docs/knowledge.md` 4.22 章は H-1 完了時点で記録済（2026-05-08、`55b39f1`）
 
-### H-11: 本番反映
+### H-11: 本番反映（完了 2026-05-09）
 
-- [ ] **H-11**: PR `feature/nova-migration` → main マージ
-  - `bash workers/deploy_production.sh` で Workers 反映
-  - フロントのテレメトリスキーマが変わるなら `bash deploy_frontend.sh` も
-  - 認証付き curl で Plan H レスポンス確認（Nova Pro 到達 + 文字数 + judge スコア取得）
+- [x] **H-11**: PR #41 (`feature/nova-migration` → main) マージ完了（merge commit `39814b2`、2026-05-09）
+  - スクリプト整合修正 (`c7826cf` / `42af720`): ANTHROPIC_API_KEY 登録ステップ削除、テストボディの新スキーマ化、curl -sv→-si、ALLOWED_ORIGIN_PROD を独自ドメインに統一
+  - `bash workers/deploy_production.sh` で本番反映（Worker Version `c6ed26b0-a78f-4f73-a0f4-70c3566a4aec`）
+  - 認証付き curl で Plan H レスポンス確認（200 / 401 / 404 すべて期待通り、`generator_model` / `judge_model` 到達確認）
+  - フロント（public/assets）変更はテレメトリ entry にフィールド追加のみで、既存スキーマと互換 → `bash deploy_frontend.sh` は次回フロントを使うときで十分（Plan H 反映直後の Worker 動作には影響なし）
 
-### H-12: 観測（人間タスク）
+### H-12: 観測（人間タスク、2026-05-09 開始）
 
 - [ ] **H-12**: 1〜2 週間の実走 → `fetch_entries.sh` で Plan H 前後比較
   - 成功条件: accuracy 平均 ≥ 3.0、合格率 ≥ 30%
+  - 観測初期所感（2 件のテストから）:
+    - **accuracy が劇的に改善**（Plan E 期 2.56 → Plan H 期 4〜5）。Wikipedia 抜粋なしでも Nova Pro が地理常識で書ける兆候
+    - specificity / density はまだ低い傾向（汎用フレーズや情緒修飾が残る）→ H-6 プロンプト再チューンの候補
+    - 再生成フロー（NG → 再生成 → 再判定）も正常動作
   - 未達ならロールバックして Plan G の G-2/G-3/G-4（RAG 拡張）に着手判断
 
 ### Plan H 着手で残す将来課題（Plan H 自体には含めない）

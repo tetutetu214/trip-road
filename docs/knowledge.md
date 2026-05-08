@@ -1273,6 +1273,28 @@ LLM 自動生成を保ったまま品質を上げる。手作業による解説�
 - 出力: 「処暑の頃の小田原市」のテーマで日本語生成 OK、現状仕様の 120-180 字よりやや長め（200 字程度）→ プロンプト調整で吸収する余地あり、これは H-6 でやる
 - 日本語生成品質の所感: 固有名詞（相模湾、小田原城、鈴廣かまぼこの里、城下町）を Wikipedia 抜粋なしでも自然に挿入できており、Plan G の RAG 拡張なしでも accuracy が改善する可能性が見えた
 
+### 4.22.7 H-11 本番反映（2026-05-09）の所感
+
+- PR #41（`feature/nova-migration` → main）マージ完了 (`39814b2`)
+- 反映前のスクリプト整合修正（`c7826cf` / `42af720`）でハマりどころ 3 つを潰した:
+  - `deploy_production.sh` が `wrangler secret put ANTHROPIC_API_KEY` を毎回上書きしていた（Plan H で撤廃したのに）
+  - テストボディが旧スキーマ `season:"spring"`（Plan E で `solar_term:"07"` に変えていたが反映漏れ）
+  - `curl -sv` が APP_PASSWORD ヘッダを画面に出していた（メモリ「シークレットのマスク出力禁止」違反）
+  - `ALLOWED_ORIGIN_PROD` が `pages.dev` で `update_allowed_origin.sh` の独自ドメインと衝突 → 本番運用で CORS が壊れる構造 → 統一
+- Worker Version `c6ed26b0-a78f-4f73-a0f4-70c3566a4aec` で本番反映、`bash workers/deploy_production.sh` のテスト 1〜3 は全て期待通り（200 / 401 / 404）
+- ANTHROPIC_API_KEY を即削除（てつてつ判断）、Workers Secrets は 6 種に整理
+- 削除後の千代田区テストでも /api/describe は HTTP 200 を返し、Plan H 構成だけで完全に動作することを確認
+- 初期所感（2 件のみ）:
+  - **accuracy 軸が劇的に改善** （相模原市緑区 5、千代田区 4）。Plan E 期は 2.56 平均だったので、Nova Pro の素の固有名詞表現が Wikipedia なしでも機能している
+  - **specificity / density は依然弱い**（汎用フレーズ・情緒修飾が残る）。H-6 のプロンプト再チューン候補
+  - judge の deductions 書式に違和感（accuracy 軸で「Wikipedia 抜粋なしだが地理常識として妥当」のような肯定的内容が deductions 配列に入る）→ judge プロンプト解釈の余地あり、観測続けて頻発するなら H-6 で対処
+  - self-preference bias（Nova→Nova の甘採点）の有無は人間の実走体験で判定する（H-12 観測）
+
+### 4.22.8 教訓
+
+- Plan の整合性検証は「実装コード」だけでなく「運用スクリプト」「~/.secrets/」「Workers Secrets の登録状態」「ドキュメントの古いスキーマ」もスコープに入れる必要がある。今回 `deploy_production.sh` の旧スキーマ（season:"spring"）と ANTHROPIC_API_KEY 登録ステップは Plan E 反映時から残っていた残債で、本番反映の直前に発覚した
+- 「破壊的操作（シークレット削除）」と「観測ゲート（H-12）」のトレードオフは、てつてつのリスク許容度で決まる。Plan H は「即削除」を選んだが、もし観測中にロールバックが発生した場合は ~/.secrets/trip-road.env の旧キー（過去払い出し済）から `wrangler secret put ANTHROPIC_API_KEY` で復旧可能。ロールバック手順書は `docs/plan.md` 12.2 と PR #41 の説明にあり
+
 ---
 
 ## 5. 参考資料
