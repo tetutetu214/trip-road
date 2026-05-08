@@ -1,16 +1,20 @@
 /**
- * Judge 統合（Plan E / Phase 6.3）
+ * Judge 統合（Plan E / Phase 6.3、Plan H で Bedrock Nova Pro 化）
  *
- * 4 軸（事実正確性 / 具体性 / 季節整合 / 情報密度）を Sonnet 4.6 で並列評価し、
+ * 4 軸（事実正確性 / 具体性 / 季節整合 / 情報密度）を Amazon Nova Pro で並列評価し、
  * 集約スコアと判定（passed: true/false/null）を返す。
  *
- * 設計判断は docs/plan.md 第 10 章、仕様詳細は docs/spec.md 10.4 章、
- * 実装上の判断は docs/knowledge.md 4.10 章を参照。
+ * Plan H で Sonnet 4.6 → Nova Pro に切替（Generator と同モデル、self-preference bias 承知）。
+ * Anthropic Messages API → Bedrock Runtime Converse API へ。HTTP 呼出は nova.js の
+ * callConverse に集約。リトライ・パースは judge.js が責任を持つ。
+ *
+ * 設計判断は docs/plan.md 第 12 章、仕様詳細は docs/spec.md 10.4 章、
+ * 実装上の判断は docs/knowledge.md 4.10 / 4.22 章を参照。
  *
  * 公開する関数:
- *   - parseJudgeResponse: Sonnet 出力文字列 → {score, deductions, notes} 抽出（純粋関数）
+ *   - parseJudgeResponse: Nova 出力文字列 → {score, deductions, notes} 抽出（純粋関数）
  *   - aggregateScores: 4 軸結果 → {passed, scores, deductions} 集約（純粋関数）
- *   - callJudge: 1 軸を Sonnet に投げる（429 リトライ + JSON パース）
+ *   - callJudge: 1 軸を Nova Pro に投げる（429 / 5xx リトライ + JSON パース）
  *   - judgeAll: 文字数判定 → Wikipedia → 4 軸並列 → 集約のメインフロー
  */
 
@@ -21,11 +25,15 @@ import {
   buildInformationDensityPrompt,
 } from './judge_prompts.js';
 import { getCachedWikipediaExtract } from './wikipedia.js';
+import { callConverse, NOVA_MODEL_ID } from './nova.js';
 
 // ---- 定数 ----
 
-export const JUDGE_MODEL = 'claude-sonnet-4-6';
+// Plan H 以降、Judge も Generator と同じ Bedrock Nova Pro を使う（self-preference bias 承知）
+export const JUDGE_MODEL = NOVA_MODEL_ID;
 export const JUDGE_MAX_TOKENS = 600;
+// Judge は揺らがないように temperature=0（同じ入力なら同じスコア）
+export const JUDGE_TEMPERATURE = 0.0;
 
 // 文字数の許容範囲（spec.md 4.X / 10.4）
 const MIN_DESCRIPTION_LENGTH = 120;
@@ -33,6 +41,11 @@ const MAX_DESCRIPTION_LENGTH = 180;
 
 // 429 / 5xx リトライ間隔（指数バックオフの初項、ms）
 const RETRY_BACKOFF_MS = 1000;
+
+// Judge 用の Converse system prompt（軸ごとの判定指針は judge_prompts.js 側に持たせ、
+// ここでは出力フォーマットだけ強制する）
+const JUDGE_SYSTEM_PROMPT =
+  'あなたは厳格な校閲者です。指定された評価軸で減点根拠を引用列挙し、最後にスコアを 1〜5 の整数で出します。出力は { "deductions": [...], "notes": "...", "score": N } の JSON のみで、それ以外の説明文は加えないでください。';
 
 // 軸名 → プロンプト構築関数のマッピング
 const AXIS_PROMPT_BUILDERS = {
@@ -65,14 +78,11 @@ export const PASS_THRESHOLD = 3.5;
 // ---- 純粋関数 ----
 
 /**
- * Sonnet 出力文字列から JSON ブロックを抽出して {score, deductions, notes} を返す。
+ * Nova 出力文字列から JSON ブロックを抽出して {score, deductions, notes} を返す。
  *
- * Sonnet は「JSON のみ出力」と指示しても前後に説明文を付けてくる癖があるので、
+ * Nova / Sonnet とも「JSON のみ出力」と指示しても前後に説明文を付けてくる癖があるので、
  * 最初の `{...}` ブロックを正規表現で抽出してから JSON.parse する。
  * パース失敗・スキーマ不正・score 範囲外（1〜5 の整数でない）はすべて null。
- *
- * @param {string} text
- * @returns {{score: number, deductions: string[], notes: string}|null}
  */
 export function parseJudgeResponse(text) {
   if (typeof text !== 'string') return null;
@@ -105,14 +115,6 @@ export function parseJudgeResponse(text) {
  *   - いずれかの軸で score=null（パース失敗・リトライ全敗）→ null（fail-open）
  *   - 重み付き合計 weighted = Σ AXIS_WEIGHTS[axis] * scores[axis] が
  *     PASS_THRESHOLD（3.5）以上なら true、未満なら false
- *
- * 戻り値の形式は呼び出し側互換のため {passed, scores, deductions} を維持。
- * weighted 値そのものは公開せず、観測には fetch_entries.sh 側で再計算する
- * （AXIS_WEIGHTS / PASS_THRESHOLD は export 済）。
- *
- * @param {Record<string, {score: number|null, deductions: string[], notes: string}>} judgments
- *        キーは accuracy / specificity / season_fit / density
- * @returns {{passed: boolean|null, scores: object|null, deductions: object}}
  */
 export function aggregateScores(judgments) {
   const scores = {};
@@ -147,7 +149,7 @@ export function aggregateScores(judgments) {
 // ---- 副作用ありの統合関数 ----
 
 /**
- * 1 軸を Sonnet に投げてパース済結果を返す。
+ * 1 軸を Nova Pro に投げてパース済結果を返す。
  *
  * - HTTP 429 / 5xx は 1 回だけ指数バックオフ 1 秒リトライ
  * - リトライも失敗したら、または JSON パース失敗なら {score: null} を返す
@@ -155,8 +157,8 @@ export function aggregateScores(judgments) {
  *
  * @param {string} axis - 'accuracy' | 'specificity' | 'season_fit' | 'density'
  * @param {object} params - {description, prefecture, municipality, solarTerm[, wikipediaExtract]}
- * @param {object} env - Workers env（ANTHROPIC_API_KEY を含む）
- * @param {typeof fetch} [fetchFn=fetch]
+ * @param {object} env - Workers env（AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY を含む）
+ * @param {Function} [callConverseFn=callConverse] - テスト用注入。`(env, request) => Promise<{ok, text} | {ok: false, status, detail}>`
  * @param {(ms: number) => Promise<void>} [sleepFn] - テストで即時 resolve に差し替え可能
  * @returns {Promise<{score: number|null, deductions: string[], notes: string}>}
  */
@@ -164,7 +166,7 @@ export async function callJudge(
   axis,
   params,
   env,
-  fetchFn = fetch,
+  callConverseFn = callConverse,
   sleepFn = (ms) => new Promise((r) => setTimeout(r, ms))
 ) {
   const builder = AXIS_PROMPT_BUILDERS[axis];
@@ -173,10 +175,14 @@ export async function callJudge(
   }
   const prompt = builder(params);
 
-  const body = {
-    model: JUDGE_MODEL,
-    max_tokens: JUDGE_MAX_TOKENS,
-    messages: [{ role: 'user', content: prompt }],
+  const request = {
+    modelId: JUDGE_MODEL,
+    system: [{ text: JUDGE_SYSTEM_PROMPT }],
+    messages: [{ role: 'user', content: [{ text: prompt }] }],
+    inferenceConfig: {
+      maxTokens: JUDGE_MAX_TOKENS,
+      temperature: JUDGE_TEMPERATURE,
+    },
   };
 
   // 1 回目 + 1 回リトライ
@@ -185,36 +191,22 @@ export async function callJudge(
     if (attempt > 0) {
       await sleepFn(RETRY_BACKOFF_MS);
     }
-    try {
-      const res = await fetchFn('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': env.ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify(body),
-      });
+    const result = await callConverseFn(env, request);
 
-      // リトライ対象：429 / 5xx
-      if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
-        lastError = `HTTP ${res.status}`;
-        continue;
-      }
-
-      if (!res.ok) {
-        // 4xx（429 以外）はリトライしても無駄なので即 fail-open
-        return { score: null, deductions: [], notes: `HTTP ${res.status}` };
-      }
-
-      const data = await res.json();
-      const text = data?.content?.[0]?.text ?? '';
-      const parsed = parseJudgeResponse(text);
+    if (result.ok) {
+      const parsed = parseJudgeResponse(result.text);
       if (parsed) return parsed;
       return { score: null, deductions: [], notes: 'parse failed' };
-    } catch (err) {
-      lastError = err?.message ?? String(err);
     }
+
+    // リトライ対象：429 / 5xx
+    if (result.status === 429 || (result.status >= 500 && result.status < 600)) {
+      lastError = `HTTP ${result.status}`;
+      continue;
+    }
+
+    // 4xx（429 以外）はリトライしても無駄なので即 fail-open
+    return { score: null, deductions: [], notes: `HTTP ${result.status}` };
   }
 
   return { score: null, deductions: [], notes: lastError ?? 'failed' };
@@ -222,24 +214,6 @@ export async function callJudge(
 
 /**
  * 文字数判定 → Wikipedia 取得 → 4 軸並列 judge → 集約 のメインフロー。
- *
- * @param {object} args
- * @param {string} args.description
- * @param {string} args.prefecture
- * @param {string} args.municipality
- * @param {string} args.solarTerm
- * @param {string} [args.muniCode] - Wikipedia キャッシュ用キー。未指定なら municipality を使う
- * @param {object} args.env
- * @param {typeof fetch} [args.fetchFn=fetch]
- * @param {Function} [args.wikipediaFetcher] - 既定: getCachedWikipediaExtract
- * @param {Function} [args.judgeRunner] - 既定: callJudge（テストでモック可能）
- * @returns {Promise<{
- *   passed: boolean|null,
- *   lengthOk: boolean,
- *   scores: object|null,
- *   deductions: object,
- *   error: string|null,
- * }>}
  */
 export async function judgeAll({
   description,
@@ -281,10 +255,10 @@ export async function judgeAll({
     const factualityParams = { ...baseParams, wikipediaExtract };
 
     const [accuracy, specificity, season_fit, density] = await Promise.all([
-      judgeRunner('accuracy', factualityParams, env, fetchFn),
-      judgeRunner('specificity', baseParams, env, fetchFn),
-      judgeRunner('season_fit', baseParams, env, fetchFn),
-      judgeRunner('density', baseParams, env, fetchFn),
+      judgeRunner('accuracy', factualityParams, env),
+      judgeRunner('specificity', baseParams, env),
+      judgeRunner('season_fit', baseParams, env),
+      judgeRunner('density', baseParams, env),
     ]);
 
     // 4. 集約

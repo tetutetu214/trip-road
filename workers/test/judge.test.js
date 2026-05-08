@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   JUDGE_MODEL,
+  JUDGE_MAX_TOKENS,
+  JUDGE_TEMPERATURE,
   AXIS_WEIGHTS,
   PASS_THRESHOLD,
   parseJudgeResponse,
@@ -8,6 +10,7 @@ import {
   callJudge,
   judgeAll,
 } from '../src/judge.js';
+import { NOVA_MODEL_ID } from '../src/nova.js';
 
 const SAMPLE_PARAMS = {
   // 121 字（120〜180 の範囲内）
@@ -19,23 +22,33 @@ const SAMPLE_PARAMS = {
   wikipediaExtract: '相模原市緑区は、相模原市を構成する3行政区のうちの一つである。',
 };
 
-// テスト用に内容に依らず Sonnet 風の応答を返すヘルパ
-function makeFetchFn(responder) {
-  return async (url, options) => responder(url, options);
+/**
+ * Bedrock Converse モック。シーケンスで複数レスポンスを順に返せる。
+ * 戻り値は callConverse の戻り値形式 `{ok, text}` または `{ok: false, status, detail}`。
+ */
+function makeCallConverseFn(sequence) {
+  let i = 0;
+  const calls = [];
+  const fn = async (env, request) => {
+    calls.push({ env, request });
+    const next = typeof sequence === 'function' ? sequence(i, request) : sequence[i++];
+    if (typeof next === 'function') return next();
+    return next;
+  };
+  fn.calls = calls;
+  return fn;
 }
 
-function jsonResponse(body, init = {}) {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
+describe('JUDGE_MODEL（Plan H）', () => {
+  it('Bedrock Nova Pro の inference profile が指定されている', () => {
+    expect(JUDGE_MODEL).toBe(NOVA_MODEL_ID);
+    expect(JUDGE_MODEL).toBe('us.amazon.nova-pro-v1:0');
   });
-}
-
-describe('JUDGE_MODEL', () => {
-  it('Sonnet 4.6 が指定されている', () => {
-    expect(JUDGE_MODEL).toContain('sonnet');
-    expect(JUDGE_MODEL).toContain('4-6');
+  it('JUDGE_MAX_TOKENS と JUDGE_TEMPERATURE が定数として export', () => {
+    expect(typeof JUDGE_MAX_TOKENS).toBe('number');
+    expect(JUDGE_MAX_TOKENS).toBeGreaterThan(0);
+    // Judge は揺らがないように 0 にする設計
+    expect(JUDGE_TEMPERATURE).toBe(0);
   });
 });
 
@@ -61,7 +74,7 @@ describe('parseJudgeResponse', () => {
 
   it('JSON パース失敗時は null', () => {
     expect(parseJudgeResponse('これは JSON ではない')).toBeNull();
-    expect(parseJudgeResponse('{score: 5,}')).toBeNull(); // 不正 JSON
+    expect(parseJudgeResponse('{score: 5,}')).toBeNull();
   });
 
   it('score フィールドが欠落していたら null', () => {
@@ -177,54 +190,101 @@ describe('aggregateScores（G-1: 重み付き合計）', () => {
   });
 });
 
-describe('callJudge', () => {
-  const env = { ANTHROPIC_API_KEY: 'sk-test' };
+describe('callJudge（Plan H: Bedrock Nova Pro 経由）', () => {
+  const env = { AWS_ACCESS_KEY_ID: 'AKIAEXAMPLE', AWS_SECRET_ACCESS_KEY: 'examplesecret' };
 
   it('正常レスポンスから {score, deductions, notes} を返す', async () => {
-    const fetchFn = makeFetchFn(async (_url, _options) => {
-      return jsonResponse({
-        content: [{ type: 'text', text: '{"deductions": [], "score": 5, "notes": "ok"}' }],
-      });
-    });
-    const result = await callJudge('accuracy', SAMPLE_PARAMS, env, fetchFn);
+    const callConverseFn = makeCallConverseFn([
+      {
+        ok: true,
+        text: '{"deductions": [], "score": 5, "notes": "ok"}',
+      },
+    ]);
+    const result = await callJudge('accuracy', SAMPLE_PARAMS, env, callConverseFn);
     expect(result.score).toBe(5);
     expect(result.deductions).toEqual([]);
     expect(result.notes).toBe('ok');
   });
 
+  it('callConverse に渡す request は modelId / system / messages / inferenceConfig を持つ Converse 形式', async () => {
+    const callConverseFn = makeCallConverseFn([
+      { ok: true, text: '{"score":5,"deductions":[],"notes":""}' },
+    ]);
+    await callJudge('accuracy', SAMPLE_PARAMS, env, callConverseFn);
+    const sentRequest = callConverseFn.calls[0].request;
+    expect(sentRequest.modelId).toBe(JUDGE_MODEL);
+    expect(Array.isArray(sentRequest.system)).toBe(true);
+    expect(sentRequest.system[0].text).toContain('校閲者');
+    expect(Array.isArray(sentRequest.messages)).toBe(true);
+    expect(sentRequest.messages[0].role).toBe('user');
+    expect(Array.isArray(sentRequest.messages[0].content)).toBe(true);
+    expect(typeof sentRequest.messages[0].content[0].text).toBe('string');
+    expect(sentRequest.inferenceConfig.maxTokens).toBe(JUDGE_MAX_TOKENS);
+    expect(sentRequest.inferenceConfig.temperature).toBe(0);
+  });
+
   it('429 → 1 回リトライで成功すれば結果を返す', async () => {
-    let calls = 0;
-    const fetchFn = makeFetchFn(async () => {
-      calls++;
-      if (calls === 1) {
-        return new Response('rate limit', { status: 429 });
-      }
-      return jsonResponse({
-        content: [{ type: 'text', text: '{"deductions": [], "score": 4, "notes": "retried"}' }],
-      });
-    });
-    const sleepFn = async () => {}; // 即時 resolve（テスト高速化）
-    const result = await callJudge('accuracy', SAMPLE_PARAMS, env, fetchFn, sleepFn);
-    expect(calls).toBe(2);
+    const callConverseFn = makeCallConverseFn([
+      { ok: false, status: 429, detail: 'rate limit' },
+      { ok: true, text: '{"deductions": [], "score": 4, "notes": "retried"}' },
+    ]);
+    const sleepFn = async () => {};
+    const result = await callJudge('accuracy', SAMPLE_PARAMS, env, callConverseFn, sleepFn);
+    expect(callConverseFn.calls).toHaveLength(2);
     expect(result.score).toBe(4);
   });
 
   it('429 → リトライも失敗なら score=null（fail-open フラグ）', async () => {
-    let calls = 0;
-    const fetchFn = makeFetchFn(async () => {
-      calls++;
-      return new Response('rate limit', { status: 429 });
-    });
+    const callConverseFn = makeCallConverseFn([
+      { ok: false, status: 429, detail: 'rate limit' },
+      { ok: false, status: 429, detail: 'rate limit' },
+    ]);
     const sleepFn = async () => {};
-    const result = await callJudge('accuracy', SAMPLE_PARAMS, env, fetchFn, sleepFn);
-    expect(calls).toBe(2);
+    const result = await callJudge('accuracy', SAMPLE_PARAMS, env, callConverseFn, sleepFn);
+    expect(callConverseFn.calls).toHaveLength(2);
     expect(result.score).toBeNull();
     expect(Array.isArray(result.deductions)).toBe(true);
+  });
+
+  it('5xx もリトライ対象', async () => {
+    const callConverseFn = makeCallConverseFn([
+      { ok: false, status: 503, detail: 'unavailable' },
+      { ok: true, text: '{"score":5,"deductions":[],"notes":""}' },
+    ]);
+    const sleepFn = async () => {};
+    const result = await callJudge('accuracy', SAMPLE_PARAMS, env, callConverseFn, sleepFn);
+    expect(result.score).toBe(5);
+  });
+
+  it('400（429 以外の 4xx）はリトライしない、即 fail-open', async () => {
+    const callConverseFn = makeCallConverseFn([
+      { ok: false, status: 400, detail: 'bad request' },
+    ]);
+    const sleepFn = async () => {};
+    const result = await callJudge('accuracy', SAMPLE_PARAMS, env, callConverseFn, sleepFn);
+    expect(callConverseFn.calls).toHaveLength(1);
+    expect(result.score).toBeNull();
+    expect(result.notes).toContain('400');
+  });
+
+  it('JSON パース不能な text なら score=null', async () => {
+    const callConverseFn = makeCallConverseFn([
+      { ok: true, text: '何も JSON が含まれていない応答' },
+    ]);
+    const result = await callJudge('accuracy', SAMPLE_PARAMS, env, callConverseFn);
+    expect(result.score).toBeNull();
+    expect(result.notes).toBe('parse failed');
+  });
+
+  it('未知の axis を弾く', async () => {
+    const result = await callJudge('unknown', SAMPLE_PARAMS, env);
+    expect(result.score).toBeNull();
+    expect(result.notes).toContain('unknown axis');
   });
 });
 
 describe('judgeAll', () => {
-  const env = { ANTHROPIC_API_KEY: 'sk-test' };
+  const env = { AWS_ACCESS_KEY_ID: 'AKIAEXAMPLE', AWS_SECRET_ACCESS_KEY: 'examplesecret' };
 
   function makeJudgeRunner(scoreByAxis) {
     return async (axis, _params, _env) => ({
@@ -270,7 +330,7 @@ describe('judgeAll', () => {
       return { score: 5, deductions: [], notes: '' };
     };
     const result = await judgeAll({
-      description: SAMPLE_PARAMS.description, // 100字超 200字未満
+      description: SAMPLE_PARAMS.description,
       prefecture: SAMPLE_PARAMS.prefecture,
       municipality: SAMPLE_PARAMS.municipality,
       solarTerm: SAMPLE_PARAMS.solarTerm,
@@ -292,7 +352,6 @@ describe('judgeAll', () => {
       solarTerm: SAMPLE_PARAMS.solarTerm,
       env,
       wikipediaFetcher: async () => null,
-      // 0.4*2 + 0.2*2 + 0.2*4 + 0.2*2 = 2.4 < 3.5 → false
       judgeRunner: makeJudgeRunner({ accuracy: 2, specificity: 2, season_fit: 4, density: 2 }),
     });
     expect(result.passed).toBe(false);
@@ -325,11 +384,11 @@ describe('judgeAll', () => {
       env,
       wikipediaFetcher: async () => null,
       judgeRunner: async () => {
-        throw new Error('sonnet down');
+        throw new Error('nova down');
       },
     });
     expect(result.passed).toBeNull();
     expect(result.lengthOk).toBe(true);
-    expect(result.error).toContain('sonnet down');
+    expect(result.error).toContain('nova down');
   });
 });

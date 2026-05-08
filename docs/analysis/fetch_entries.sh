@@ -112,6 +112,49 @@ if [ "$ENTRY_COUNT" -gt 0 ]; then
     fi
   fi
 
+  # === Plan H モデル別集計 ===
+  # Plan H 反映後の entry には generator_model / judge_model が入っている。
+  # Plan E 期（Anthropic 期）と Plan H 期（Bedrock Nova 期）を切り分けて
+  # 軸別平均が改善したかを直接比較できるようにする。
+  PLAN_H_COUNT=$(jq -s '[.[] | select(.generator_model != null)] | length' "$OUT_FILE")
+
+  if [ "$PLAN_H_COUNT" -gt 0 ]; then
+    echo ""
+    echo "=== Plan H モデル別集計（対象: ${PLAN_H_COUNT} 件、generator_model 付き entry のみ） ==="
+
+    # モデル別の件数
+    echo ""
+    echo "  モデル別件数（generator_model）:"
+    jq -s -r '[.[] | select(.generator_model != null)] | group_by(.generator_model) | map("    \(.[0].generator_model): \(length)件") | .[]' "$OUT_FILE"
+
+    # モデル別の軸別平均（generator_model でグループ化、null は除外）
+    echo ""
+    echo "  モデル別軸別平均スコア（null 除外、小数 2 桁）:"
+    for model in $(jq -s -r '[.[] | select(.generator_model != null) | .generator_model] | unique | .[]' "$OUT_FILE"); do
+      echo "    [${model}]"
+      for axis in accuracy specificity season_fit density; do
+        AVG=$(jq -s \
+          --arg model "$model" \
+          --arg axis "critic_${axis}" \
+          '[.[] | select(.generator_model == $model and .[$axis] != null) | .[$axis]] | if length > 0 then ((add / length) * 100 | round / 100) else "-" end' \
+          "$OUT_FILE")
+        COUNT=$(jq -s \
+          --arg model "$model" \
+          --arg axis "critic_${axis}" \
+          '[.[] | select(.generator_model == $model and .[$axis] != null) | .[$axis]] | length' \
+          "$OUT_FILE")
+        echo "      ${axis}: ${AVG} (n=${COUNT})"
+      done
+
+      # モデル別合格率
+      MODEL_PASSED=$(jq -s --arg model "$model" '[.[] | select(.generator_model == $model and .judge_passed == true)] | length' "$OUT_FILE")
+      MODEL_TOTAL=$(jq -s --arg model "$model" '[.[] | select(.generator_model == $model and (.judge_passed == true or .judge_passed == false))] | length' "$OUT_FILE")
+      if [ "$MODEL_TOTAL" -gt 0 ]; then
+        echo "      合格率: ${MODEL_PASSED}/${MODEL_TOTAL} ($(( MODEL_PASSED * 100 / MODEL_TOTAL ))%)"
+      fi
+    done
+  fi
+
   echo ""
   echo "次のステップ: ${OUT_FILE} の中身を Claude に貼って、"
   echo "             docs/analysis/prompts.md のテンプレートと組み合わせて分析する。"

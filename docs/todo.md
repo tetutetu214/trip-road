@@ -1,6 +1,6 @@
 # trip-road タスク一覧
 
-**最終更新**: 2026-05-08（Plan H 起案：Bedrock Nova Pro への全面移行を計画）
+**最終更新**: 2026-05-09（Plan H の H-1〜H-5/H-7/H-8/H-9/H-10 完了、`feature/nova-migration` ブランチで PR 待ち）
 
 ---
 
@@ -379,34 +379,35 @@ Issue #39。Judge プロンプト変更時の暴走検出のための校正用�
 
 ### H-3〜H-7: Workers コード改修
 
-- [ ] **H-3**: `workers/src/nova.js` 新設（aws4fetch で SigV4 署名 POST、Bedrock Runtime Converse API、Generator + Judge 共用クライアント、modelId は `us.amazon.nova-pro-v1:0`、`maxTokens` 必須明示で全 Converse 呼出に設定 — Generator 200 / Judge 1024 目安）
-- [ ] **H-4**: `workers/src/describe_flow.js` の generator 呼出を nova.js 経由に差替え
-- [ ] **H-5**: `workers/src/judge.js` の Sonnet 呼出を nova.js 経由に差替え
-- [ ] **H-6**: プロンプト再チューン
-  - Generator: `anthropic.js` の SYSTEM_PROMPT を Nova 向けに書き直し（Converse API は system を別フィールドで渡す形式。XML タグや Anthropic 特有の指示形式の調整）
-  - Judge 4 軸: `judge_prompts.js` の各プロンプトを Nova 向けに、G-1 のプロンプト緩和方針（直接矛盾のみ重く減点・自己放棄禁止）は引き継ぐ
-- [ ] **H-7**: 旧 Anthropic 配線の削除
-  - `anthropic.js` の Anthropic API 呼出関数を削除（純粋関数の Generator プロンプト組立は nova.js 側に吸収または分離モジュール化）
-  - `wrangler secret delete ANTHROPIC_API_KEY`（本番反映後）
+- [x] **H-3** (2026-05-08, `d4e67d1`): `workers/src/nova.js` 新設（aws4fetch で SigV4 署名、Converse API、Generator + Judge 共用、modelId `us.amazon.nova-pro-v1:0`、`maxTokens` 必須明示）
+- [x] **H-4** (2026-05-08, `1709c78`): `workers/src/describe_flow.js` の generator 呼出を `callNovaGenerator` 経由に、引数を env 全体に変更
+- [x] **H-5** (2026-05-08, `1709c78`): `workers/src/judge.js` の Sonnet 呼出を nova.js `callConverse` 経由に、`JUDGE_MODEL` を `us.amazon.nova-pro-v1:0`、temperature=0 を明示
+- [ ] **H-6（保留）**: プロンプト再チューン
+  - 現状は Anthropic 向けプロンプトを Converse 形式にそのまま移植（`system` を配列に、Few-shot は維持）
+  - 本番反映後の観測（accuracy / specificity / density のスコア推移）次第で再チューンを判断
+  - G-1 のプロンプト緩和方針（直接矛盾のみ重く減点・自己放棄禁止）は維持済み
+- [x] **H-7（コード側）** (2026-05-08, `1709c78`): `anthropic.js` / `anthropic.test.js` を削除（責務は nova.js に移管）
+  - 残: `wrangler secret delete ANTHROPIC_API_KEY` は本番反映（H-11）後に実施
 
 ### H-8: テスト整備
 
-- [ ] **H-8**: `workers/test/nova.test.js` 新設、既存 `anthropic.test.js` / `judge.test.js` / `describe_flow.test.js` の Anthropic モックを Nova モックへ差替え、全 vitest 通過確認
+- [x] **H-8** (2026-05-08, `d4e67d1` + `1709c78`): `workers/test/nova.test.js` 新設（32 ケース）、`judge.test.js` を callConverseFn モック化、`describe_flow.test.js` を Converse 配列形式に書換、全 vitest 通過
 
 ### H-9: テレメトリ拡張
 
-- [ ] **H-9**: entry に `generator_model: "nova-pro"` / `judge_model: "nova-pro"` フィールド追加
-  - フロント `public/assets/telemetry.js` のスキーマ更新
-  - Worker `describe_flow.js` のレスポンス・テレメトリ書き込み箇所の更新
-  - `docs/analysis/fetch_entries.sh` の集計に「モデル別軸別平均」を追加
-  - `docs/spec.md` 10.6 のテレメトリスキーマ更新
+- [x] **H-9** (2026-05-09): entry に `generator_model` / `judge_model` フィールド追加
+  - フロント `public/assets/telemetry.js` の `buildTelemetryEntry` にフィールド追加 + 既定 null
+  - Worker `describe_flow.js` の 4 レスポンス経路すべてに `generator_model` / `judge_model` を埋め込み、`index.js` の /api/describe レスポンスにも伝播
+  - フロント `api.js` `fetchDescription` の戻り値に乗せ、`app.js` で `appendTelemetry` 呼出に渡す
+  - `docs/analysis/fetch_entries.sh` の集計に「Plan H モデル別軸別平均 + 合格率」を追加
+  - `docs/spec.md` 5.4 / 10.5 / 10.6 にスキーマ反映、`test/telemetry.test.js` に検証ケース追加（フロント全 47 / Worker 全 131 pass）
 
 ### H-10: ドキュメント更新
 
-- [ ] **H-10**: 関連ドキュメントの整合
-  - `CLAUDE.md` の「2. 技術スタック」を Anthropic → Amazon Nova Pro に書き換え
-  - `docs/spec.md` の API 仕様・プロンプト仕様・モデル指定を Nova に更新
-  - `docs/knowledge.md` 4.22 章として Plan H 着手の経緯と設計判断を記録
+- [x] **H-10** (2026-05-09): 関連ドキュメントの整合
+  - プロジェクト `CLAUDE.md`: 技術スタックを Bedrock Nova Pro に、Workers Secrets / 外部 API / Secrets 設定コマンドを Plan H 構成に書換
+  - `docs/spec.md`: 5.4 / 5.6 / 6.3 / 10.5 / 10.6 / 10.8 を Plan H 構成に更新（Anthropic Messages → Bedrock Converse、Sonnet judge → Nova judge、`generator_model` / `judge_model` 追加）
+  - `docs/knowledge.md` 4.22 章は H-1 完了時点で記録済（2026-05-08、`55b39f1`）
 
 ### H-11: 本番反映
 

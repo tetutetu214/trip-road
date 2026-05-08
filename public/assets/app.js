@@ -295,6 +295,9 @@ async function handlePosition({ lat, lon, speed }, password) {
             judge_passed: result.judge_passed,
             regenerated: result.regenerated,
             judge_error: result.judge_error,
+            // Plan H: テレメトリでモデル別比較ができるようモデル ID を保存
+            generator_model: result.generator_model ?? null,
+            judge_model: result.judge_model ?? null,
           }));
           currentDisplayStartMs = Date.now();
           updateTelemetry(currentTraceId, { ts_displayed: currentDisplayStartMs });

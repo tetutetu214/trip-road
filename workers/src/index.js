@@ -1,6 +1,6 @@
 import { timingSafeEqual } from './auth.js';
 import { corsHeaders, handlePreflight } from './cors.js';
-import { parseDescribeRequest } from './anthropic.js';
+import { parseDescribeRequest } from './nova.js';
 import { generateAndJudge } from './describe_flow.js';
 import { putToS3, generateS3Key } from './aws.js';
 
@@ -107,6 +107,8 @@ export default {
           judge_deductions: flow.judge_deductions,
           regenerated: flow.regenerated,
           judge_error: flow.judge_error,
+          generator_model: flow.generator_model,
+          judge_model: flow.judge_model,
         },
         200,
         allowedOrigin,

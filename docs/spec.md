@@ -423,7 +423,7 @@ X-App-Password: a3f9b12c8e4d6710ff293a4bc1e8d5d2
 
 **上流エラー** (502):
 ```json
-{ "error": "upstream_error", "detail": "Anthropic API error: ..." }
+{ "error": "upstream_error", "detail": "Bedrock error: ..." }
 ```
 
 ### 5.5 CORS
@@ -435,10 +435,17 @@ X-App-Password: a3f9b12c8e4d6710ff293a4bc1e8d5d2
 
 ### 5.6 Workers Secrets
 
+Plan H で `ANTHROPIC_API_KEY` は撤廃。Generator / Judge とも AWS IAM 認証（aws4fetch）で
+Bedrock Runtime を呼ぶため、AWS 系キーが必須。S3 テレメトリ書込みと同居の IAM ユーザー
+（`trip-road-telemetry-writer`）が `bedrock:InvokeModel` も持つ。
+
 | キー | 内容 |
 |---|---|
 | `APP_PASSWORD` | 32 文字 hex パスワード |
-| `ANTHROPIC_API_KEY` | Anthropic API キー |
+| `AWS_ACCESS_KEY_ID` | IAM ユーザー `trip-road-telemetry-writer` のアクセスキー（S3 + Bedrock 共用） |
+| `AWS_SECRET_ACCESS_KEY` | 同シークレットキー |
+| `AWS_REGION` | `us-east-1`（Bedrock Runtime のエンドポイントリージョン） |
+| `S3_TELEMETRY_BUCKET` | `trip-road-telemetry-tetutetu214` |
 | `ALLOWED_ORIGIN` | `https://trip-road.pages.dev` 等、許可するオリジン |
 
 ---
@@ -476,18 +483,30 @@ X-App-Password: a3f9b12c8e4d6710ff293a4bc1e8d5d2
 `solar_term_ja` は番号文字列（'01'〜'24'）を日本語名に変換した値。
 例: '01'→立春、'07'→立夏、'16'→秋分、'22'→冬至。
 
-### 6.3 Anthropic Messages API 呼出パラメータ
+### 6.3 Bedrock Converse API 呼出パラメータ（Plan H）
+
+エンドポイント: `https://bedrock-runtime.us-east-1.amazonaws.com/model/{modelId}/converse`
+（modelId は URL エンコード、認証は aws4fetch による SigV4）
+
+リクエスト body は Converse API 形式（Anthropic Messages API とは構造が違う点に注意：
+`system` と `messages[*].content` がいずれも配列、`maxTokens` は `inferenceConfig` 配下）：
 
 ```json
 {
-  "model": "claude-haiku-4-5-20251001",
-  "max_tokens": 400,
-  "system": "[6.1 のテキスト]",
+  "system": [{ "text": "[6.1 のテキスト]" }],
   "messages": [
-    { "role": "user", "content": "[6.2 のテキスト]" }
-  ]
+    { "role": "user", "content": [{ "text": "[6.2 のテキスト]" }] }
+  ],
+  "inferenceConfig": {
+    "maxTokens": 400,
+    "temperature": 0.7
+  }
 }
 ```
+
+- modelId（URL path 側）: **`us.amazon.nova-pro-v1:0`** （cross-region inference profile、us-east-1 / us-west-2 / us-east-2 に自動分散）
+- `inferenceConfig.maxTokens` は必ず明示する（未設定だとモデル最大値で quota が予約され、ThrottlingException の主因になる）
+- Generator は temperature=0.7、Judge は temperature=0（揺らがない採点のため）
 
 ### 6.4 出力例
 
@@ -951,14 +970,17 @@ async function judgeAll({ description, prefecture, municipality, solarTerm, env 
     "density": 4
   },
   "regenerated": false,
-  "judge_error": null
+  "judge_error": null,
+  "generator_model": "us.amazon.nova-pro-v1:0",
+  "judge_model": "us.amazon.nova-pro-v1:0"
 }
 ```
 
-- `judge_passed`: 全 LLM 軸 4 点以上 + 文字数 OK なら true
+- `judge_passed`: G-1 以降は重み付き合計 ≥ 3.5 + 文字数 OK なら true（旧仕様の「全 LLM 軸 4 点以上」は廃止）
 - `judge_scores`: 各軸スコア（fail-open 時は null）
 - `regenerated`: 1 回目で合格なら false、再生成発生で true
 - `judge_error`: judge 自体で例外発生時のメッセージ（fail-open 時のみ非 null）
+- `generator_model` / `judge_model`（Plan H 追加）: 生成・評価に使ったモデル ID。テレメトリで Plan E 期（Anthropic）と Plan H 期（Bedrock Nova）を切り分けて軸別平均を比較するために導入
 
 #### キャッシュ条件
 
@@ -1001,6 +1023,9 @@ async function judgeAll({ description, prefecture, municipality, solarTerm, env 
   "regenerated": false,
   "judge_error": null,
 
+  "generator_model": "us.amazon.nova-pro-v1:0",
+  "judge_model": "us.amazon.nova-pro-v1:0",
+
   "ts_displayed": null,
   "ts_left": null,
   "dwell_ms": null,
@@ -1016,7 +1041,9 @@ async function judgeAll({ description, prefecture, municipality, solarTerm, env 
 
 #### 後方互換
 
-過去 entry（4.29 までの 8 件）には新規フィールドが存在しない。分析時は欠損を許容する。
+過去 entry（4.29 までの 8 件）には Plan E の Judge 系フィールドが存在しない。
+Plan H 反映前の entry には `generator_model` / `judge_model` フィールドが存在しない。
+集計（`fetch_entries.sh`）は `has("generator_model")` でフィルタしてから Plan H 期の集計を出す。
 
 ### 10.7 フロント UI 段階表示
 
@@ -1038,9 +1065,11 @@ async function judgeAll({ description, prefecture, municipality, solarTerm, env 
 |---|---|
 | Wikipedia API タイムアウト / 5xx | extract = null、軸 1 は「Wikipedia 情報なし」前提で評価（保守的に高得点傾向） |
 | Wikipedia API 404（記事なし） | 同上 |
-| Sonnet judge レート制限 | 1 回だけリトライ（指数バックオフ 1秒）→ なお失敗なら fail-open |
-| Sonnet judge JSON パース失敗 | その軸は score=null として fail-open フラグを立てる |
-| 再生成（Haiku）も失敗 | 既存の 502 エラー応答に倣う |
+| Bedrock Nova judge レート制限（429） | 1 回だけリトライ（指数バックオフ 1 秒）→ なお失敗なら fail-open |
+| Bedrock Nova judge 5xx | 同上（リトライ対象） |
+| Bedrock Nova judge 4xx（429 以外） | 即 fail-open（その軸 score=null） |
+| Bedrock Nova judge JSON パース失敗 | その軸は score=null として fail-open フラグを立てる |
+| 再生成（Generator）も失敗 | 1 回目の出力を採用（regenerated=false で返す） |
 | 文字数 NG が 2 連続 | 通常通り表示・キャッシュなし（length 違反は generator プロンプト調整で潰す範疇） |
 
 ---
