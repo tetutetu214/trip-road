@@ -399,3 +399,95 @@ PoC スケール（利用者 1 人）では手動で localStorage クリアで�
 - **Plan E の効果測定が先**: F-1 に着手する前に、明日〜1 週間の実走で S3 に判定結果が溜まる。`fetch_entries.sh` の Plan E 集計で「文字数 NG 率」「政令市の区での fail-open 率」を観測し、F-1 の各サブ項目（F-1.1 / F-1.2 / F-1.3）の優先度を実データで判断する
 - **F-1.1 と F-1.2 は並列着手可能**: フロント変更とプロンプト調整なので衝突しない
 - **F-2 / F-3 は急がない**: F-1 で Plan E 自体の精度が上がってから取り組む方が効果が見えやすい
+
+---
+
+## 12. Phase 8 / Plan H: Amazon Bedrock Nova Pro への全面移行（2026-05-08 追記）
+
+### 12.1 背景
+
+2026-05-08 の S3 テレメトリ集計（`fetch_entries.sh` 実行結果、Plan E 対象 18 件、期間 2026-04-26〜2026-05-07）で以下の状況が判明。
+
+- 合格率 0/18（0%）、NG 確定 17 件、fail-open 1 件、再生成発生率 94%
+- 軸別平均: accuracy 2.56 / specificity 2.67 / season_fit 4.22 / density 2.67
+- NG 17 件のうち 8 件は 4 軸すべて null（文字数 NG での早期リターンか Judge 失敗）
+- G-1（プロンプト緩和、2026-05-07 反映）後のデータがほぼゼロのため G-1 単独効果は未評価
+
+「現状実用に耐えない」とユーザ判断。Plan G の RAG 拡張（G-2/G-3/G-4）に投資する前に、LLM そのものを Anthropic から Amazon Nova Pro に切替えて品質改善を図る。
+
+### 12.2 方針
+
+- **Generator**: Claude Haiku 4.5 → **Amazon Nova Pro**
+- **Judge**: Claude Sonnet 4.6 → **Amazon Nova Pro**（Generator と同モデル、ユーザ判断）
+- **Anthropic API 完全撤廃**、認証は AWS IAM 一本化、既存 `aws4fetch` を Bedrock Runtime にも流用
+- **モデル指定**: cross-region inference profile **`us.amazon.nova-pro-v1:0`** を使用（Bedrock 公式ベストプラクティス、us-east-1 / us-west-2 / us-east-2 の 3 リージョンに自動分散され障害耐性とスループット上限が向上）
+- **コンテキスト長**: スタンダード（128k token）で十分。trip-road の Generator 呼出は入出力合わせて約 200 token 程度、長コンテキスト版（300k）は不要
+- **呼び出し API**: Bedrock Runtime **Converse API**（InvokeModel ではなく統一形式を使う）
+- **`maxTokens` 必須明示**: 設定漏れはモデル最大値での quota 大量予約に直結し ThrottlingException の主因。Generator 200 / Judge 1024 を目安に、すべての Converse 呼出で必ず指定
+- **リージョン**: Workers から呼び出すエンドポイントは us-east-1（既存 S3 テレメトリと同居）。実際の推論は profile が us 系 3 リージョンに分散
+- **self-preference bias は承知**: Nova Pro Judge が Nova Pro Generator の出力を甘く採点する可能性は残るが、「現状より明らかに良く見える / 悪く見える」の二値判定で割り切り、最終判定は人間の実走体験で行う
+
+#### IAM 構成（最小権限）
+
+- 既存 IAM ユーザー `trip-road-telemetry-writer`（実態は Workers バックエンド全般用）に **新規インラインポリシー `TripRoadBedrockInvokePolicy`** を追加。既存 `TripRoadTelemetryWritePolicy`（S3 用）はそのまま残し、責務を分離
+- `bedrock:InvokeModel` のみ許可（ストリーミング不要なので `InvokeModelWithResponseStream` は付けない）
+- Resource は profile ARN + 3 リージョン分の base model ARN を列挙（cross-region inference では profile が選んだリージョンで base model 呼出が発生するため両方の許可が必要、片方だけだと AccessDeniedException）
+   - `arn:aws:bedrock:us-east-1:${ACCOUNT_ID}:inference-profile/us.amazon.nova-pro-v1:0`
+   - `arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-pro-v1:0`
+   - `arn:aws:bedrock:us-west-2::foundation-model/amazon.nova-pro-v1:0`
+   - `arn:aws:bedrock:us-east-2::foundation-model/amazon.nova-pro-v1:0`
+
+#### 監査・ログ
+
+- **CloudTrail（Bedrock 管理イベントの監査）**: AWS Control Tower の `aws-controltower-BaselineCloudTrail` で multi-region・global service events 含む形で既に有効。**追加設定不要**
+- **Bedrock Model Invocation Logging**（CloudWatch / S3 への入出力詳細ログ）: 初期は OFF。既存の S3 テレメトリ（generator/judge 出力を都度保存）で運用上の必要量はカバー。要件が出れば後付け可能
+
+#### 残る妥協点（透明性のため明示）
+
+1. **AWS 公式は IAM ロールを推奨**: Cloudflare Workers のような AWS 外環境でも本来は OIDC + `sts:AssumeRoleWithWebIdentity` 経由の短期トークンが望ましいが、PoC 個人利用のため IAM ユーザー長期キー継続。**将来課題として todo に記録**
+2. **アクセスキーローテーション計画なし**: 既存の S3 用キーと同居のため、ローテーションタスクは引き続き未着手。**将来課題として todo に記録**
+
+### 12.3 Plan G との関係
+
+Plan G（RAG 拡張 + プロンプト緩和）のうち、
+
+- **G-1**（プロンプト緩和）は反映済み。Plan H ではプロンプトを Nova 向けに再構成するため、G-1 のプロンプト緩和方針（直接矛盾のみ重く減点・自己放棄禁止）は引き継ぐ
+- **G-2 / G-3 / G-4**（Wikipedia 全本文 / Wikidata QID マップ / SPARQL RAG）は **Plan H の効果観測まで保留**。Nova Pro が固有事実を強く扱えれば G-2/G-3/G-4 の必要性が下がる可能性あり
+
+### 12.4 実装タスク（feature ブランチ `feature/nova-migration`）
+
+| 番号 | タスク | 主な変更ファイル |
+|---|---|---|
+| H-1 | IAM ポリシー拡張: `aws iam put-user-policy` で `trip-road-telemetry-writer` に `TripRoadBedrockInvokePolicy` を追加（CLI で完結、Account ID は `aws sts get-caller-identity` で動的取得） | AWS IAM（CLI） |
+| H-3 | `workers/src/nova.js` 新設（Bedrock Runtime に SigV4 署名 POST、Converse API、Generator + Judge 共用クライアント、`maxTokens` 必須明示） | `workers/src/nova.js` |
+| H-4 | Generator 配線変更: `describe_flow.js` の generator 呼出を nova.js 経由に（modelId は `us.amazon.nova-pro-v1:0`） | `workers/src/describe_flow.js` |
+| H-5 | Judge 配線変更: `judge.js` の Sonnet 呼出を nova.js 経由に（同 modelId） | `workers/src/judge.js` |
+| H-6 | プロンプト再チューン: `anthropic.js` の Generator system prompt を Nova 向けに移植、`judge_prompts.js` 4 軸も Nova 向けに（Converse API は system を別フィールドで渡す形式、Anthropic XML 形式の調整が必要） | `workers/src/anthropic.js` / `judge_prompts.js` |
+| H-7 | 旧 Anthropic 配線の削除: `anthropic.js` の Anthropic API 呼出関数を削除（プロンプト組立とパース純粋関数のみ残す or nova.js へ吸収）、`ANTHROPIC_API_KEY` シークレット削除 | `workers/src/anthropic.js` / wrangler secret delete |
+| H-8 | テスト書き直し: `nova.test.js` 新設、`anthropic.test.js` / `judge.test.js` / `describe_flow.test.js` の Anthropic モックを Nova モックへ差替 | `workers/test/*` |
+| H-9 | テレメトリ拡張: entry に `generator_model` / `judge_model` フィールド追加、`fetch_entries.sh` の集計でモデル別軸別平均が出るよう更新 | `public/assets/telemetry.js` / `workers/src/describe_flow.js` / `docs/analysis/fetch_entries.sh` / `docs/spec.md` 10.6 |
+| H-10 | ドキュメント更新: `CLAUDE.md` の技術スタックを Anthropic → Nova に、`docs/spec.md` 10.x の API 仕様、`docs/knowledge.md` 4.22 章として記録 | `CLAUDE.md` / `docs/spec.md` / `docs/knowledge.md` |
+| H-11 | PR 作成・本番反映: `bash workers/deploy_production.sh`、curl 動作確認、フロント側のフィールド名変更があれば `bash deploy_frontend.sh` も | git / wrangler |
+| H-12 | 観測: 1〜2 週間の実走 → `fetch_entries.sh` 集計、合格率と軸別平均の Plan H 前後比較 | docs/analysis |
+
+旧 H-2（Bedrock コンソールでモデルアクセス有効化）は **不要のため削除**。Nova Pro v1 は申請なしで利用可能、`amazon.nova-pro-v1:0` は ACTIVE、`us.amazon.nova-pro-v1:0` inference profile も ACTIVE であることを 2026-05-08 に確認済（`aws bedrock list-foundation-models` / `aws bedrock list-inference-profiles`）。
+
+### 12.5 期待効果
+
+- accuracy / specificity / density が現状（2.56〜2.67）より改善、合格率（重み付き合計 ≥ 3.5）が 30〜50% に
+- Anthropic API キー撤廃で運用が単純化、Workers Secrets 構成も整理（残るのは APP_PASSWORD / AWS\_\* / S3\_\* / ALLOWED_ORIGIN のみ）
+- Judge を Sonnet 4.6 → Nova Pro に下げることでコスト削減（Sonnet 入力 $3/出力 $15 → Nova Pro 入力 $0.80/出力 $3.20、1M token 比で約 1/3）
+- Bedrock Nova ファミリへの実装ノウハウが trip-road プロジェクト内に蓄積
+
+### 12.6 リスク
+
+- **Nova Pro の日本語生成・採点品質が Anthropic より低い可能性**: 本番反映後に accuracy が下がるなら、ロールバック（`feature/nova-migration` 反映前のコミットを deploy）。
+- **self-preference bias で合格率の見かけ改善が真の改善でない可能性**: 「Nova で書いて Nova で採点」が常に甘く出ているだけの可能性。実走体験での主観判定を最終ゲートにする。
+- **Bedrock のレイテンシが Anthropic 直叩きより遅い可能性**: us-east-1 同居でも、Workers エッジは多リージョン分散なのでユーザの位置による遅延は残る。レスポンスタイム閾値（spec.md 10.x で 30 秒）を超えたら段階表示の演出を見直す。
+- **プロンプト再チューンの工数が想定より大きい**: G-1 で投資した accuracy 重視の重み付けが Nova で再現しないリスク。最悪、再チューンを諦めて Anthropic に戻す。
+
+### 12.7 観測と判断
+
+- 反映直後（H-11 直後）に 5 件程度の実走で acc/spec/density の即時変化を確認
+- 1 週間で `fetch_entries.sh` 再集計、accuracy 平均 ≥ 3.0 を成功条件
+- 1 週間後に accuracy < 3.0 ならロールバックし、Plan G の G-2/G-3/G-4（RAG 拡張）に着手

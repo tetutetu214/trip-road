@@ -1,6 +1,6 @@
 # trip-road タスク一覧
 
-**最終更新**: 2026-05-07（G-1 本番反映完了、観測フェーズ）
+**最終更新**: 2026-05-08（Plan H 起案：Bedrock Nova Pro への全面移行を計画）
 
 ---
 
@@ -356,6 +356,77 @@ Issue #39。Judge プロンプト変更時の暴走検出のための校正用�
 - [ ] G-1〜G-4 反映後 1〜2 週間の観測（`fetch_entries.sh` で軸ごとの分布確認）
 - [ ] 改善が頭打ちなら OSM Overpass POI 取込（Issue 起票は判断後）
 - [ ] さらに必要なら Generator のモデルを Sonnet 4.6 に切替て A/B（Issue 起票は判断後）
+
+---
+
+## Plan H: Amazon Bedrock Nova Pro への全面移行（2026-05-08 起案）
+
+詳細は `docs/plan.md` 第 12 章を参照。
+
+### 背景
+
+2026-05-08 の S3 集計（Plan E 対象 18 件）で合格率 0/18、accuracy 平均 2.56、specificity 平均 2.67、density 平均 2.67、season_fit のみ 4.22。「現状実用に耐えない」とユーザ判断、Generator + Judge 両方を Anthropic から Amazon Nova Pro に切替える方針で進める。
+
+### H-1: AWS 側準備（CLI で完結、てつてつ手作業不要）
+
+- [ ] **H-1**: 既存 IAM ユーザー `trip-road-telemetry-writer` に新規インラインポリシー `TripRoadBedrockInvokePolicy` を追加（CLI で `aws iam put-user-policy`）
+  - Action: `bedrock:InvokeModel` のみ（ストリーミング不要、`InvokeModelWithResponseStream` 不要）
+  - Resource: `us.amazon.nova-pro-v1:0` profile ARN + 3 リージョン（us-east-1 / us-west-2 / us-east-2）の base model ARN を列挙（cross-region inference の必須セット、片方欠けると AccessDeniedException）
+  - Account ID は `aws sts get-caller-identity` で動的取得（docs に書かない）
+  - 既存 `TripRoadTelemetryWritePolicy`（S3 用）は触らず責務を分離
+
+旧 **H-2（Bedrock コンソールでモデルアクセス申請）は削除**: Nova Pro v1 は申請なしで使用可能、2026-05-08 にアクセス可能を確認済。
+
+### H-3〜H-7: Workers コード改修
+
+- [ ] **H-3**: `workers/src/nova.js` 新設（aws4fetch で SigV4 署名 POST、Bedrock Runtime Converse API、Generator + Judge 共用クライアント、modelId は `us.amazon.nova-pro-v1:0`、`maxTokens` 必須明示で全 Converse 呼出に設定 — Generator 200 / Judge 1024 目安）
+- [ ] **H-4**: `workers/src/describe_flow.js` の generator 呼出を nova.js 経由に差替え
+- [ ] **H-5**: `workers/src/judge.js` の Sonnet 呼出を nova.js 経由に差替え
+- [ ] **H-6**: プロンプト再チューン
+  - Generator: `anthropic.js` の SYSTEM_PROMPT を Nova 向けに書き直し（Converse API は system を別フィールドで渡す形式。XML タグや Anthropic 特有の指示形式の調整）
+  - Judge 4 軸: `judge_prompts.js` の各プロンプトを Nova 向けに、G-1 のプロンプト緩和方針（直接矛盾のみ重く減点・自己放棄禁止）は引き継ぐ
+- [ ] **H-7**: 旧 Anthropic 配線の削除
+  - `anthropic.js` の Anthropic API 呼出関数を削除（純粋関数の Generator プロンプト組立は nova.js 側に吸収または分離モジュール化）
+  - `wrangler secret delete ANTHROPIC_API_KEY`（本番反映後）
+
+### H-8: テスト整備
+
+- [ ] **H-8**: `workers/test/nova.test.js` 新設、既存 `anthropic.test.js` / `judge.test.js` / `describe_flow.test.js` の Anthropic モックを Nova モックへ差替え、全 vitest 通過確認
+
+### H-9: テレメトリ拡張
+
+- [ ] **H-9**: entry に `generator_model: "nova-pro"` / `judge_model: "nova-pro"` フィールド追加
+  - フロント `public/assets/telemetry.js` のスキーマ更新
+  - Worker `describe_flow.js` のレスポンス・テレメトリ書き込み箇所の更新
+  - `docs/analysis/fetch_entries.sh` の集計に「モデル別軸別平均」を追加
+  - `docs/spec.md` 10.6 のテレメトリスキーマ更新
+
+### H-10: ドキュメント更新
+
+- [ ] **H-10**: 関連ドキュメントの整合
+  - `CLAUDE.md` の「2. 技術スタック」を Anthropic → Amazon Nova Pro に書き換え
+  - `docs/spec.md` の API 仕様・プロンプト仕様・モデル指定を Nova に更新
+  - `docs/knowledge.md` 4.22 章として Plan H 着手の経緯と設計判断を記録
+
+### H-11: 本番反映
+
+- [ ] **H-11**: PR `feature/nova-migration` → main マージ
+  - `bash workers/deploy_production.sh` で Workers 反映
+  - フロントのテレメトリスキーマが変わるなら `bash deploy_frontend.sh` も
+  - 認証付き curl で Plan H レスポンス確認（Nova Pro 到達 + 文字数 + judge スコア取得）
+
+### H-12: 観測（人間タスク）
+
+- [ ] **H-12**: 1〜2 週間の実走 → `fetch_entries.sh` で Plan H 前後比較
+  - 成功条件: accuracy 平均 ≥ 3.0、合格率 ≥ 30%
+  - 未達ならロールバックして Plan G の G-2/G-3/G-4（RAG 拡張）に着手判断
+
+### Plan H 着手で残す将来課題（Plan H 自体には含めない）
+
+- [ ] AWS 公式ベストプラクティスに沿った IAM ロール化（OIDC + `sts:AssumeRoleWithWebIdentity` 経由の短期トークン）。Cloudflare Workers の OIDC 連携実装が必要、PoC スケールでは過剰なので別ブランチで判断
+- [ ] アクセスキーローテーション運用（既存 S3 用キーと同居のため未着手、定期実行スクリプト or イベントトリガで自動化したい）
+
+---
 
 ### さらに先（無時系列、検討候補）
 
