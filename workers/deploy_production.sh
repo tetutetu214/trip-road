@@ -1,7 +1,8 @@
 #!/bin/bash
 # Workers Secrets 登録 + 本番デプロイ + E2E curl 検証
 # 使用: bash deploy_production.sh （workers/ ディレクトリ内で実行）
-# 前提: ~/.secrets/trip-road.env に APP_PASSWORD / ANTHROPIC_API_KEY 設定済
+# 前提: ~/.secrets/trip-road.env に APP_PASSWORD / AWS_* / S3_* 設定済
+#       Plan H 以降、ANTHROPIC_API_KEY は不要（撤廃）
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -22,9 +23,8 @@ echo "--- APP_PASSWORD を登録 ---"
 printf '%s' "$APP_PASSWORD" | wrangler secret put APP_PASSWORD
 echo ""
 
-echo "--- ANTHROPIC_API_KEY を登録 ---"
-printf '%s' "$ANTHROPIC_API_KEY" | wrangler secret put ANTHROPIC_API_KEY
-echo ""
+# Plan H: Generator / Judge とも Bedrock Nova Pro 経由になり、ANTHROPIC_API_KEY は不要。
+# 既に登録済みのキーは本デプロイ後に `wrangler secret delete ANTHROPIC_API_KEY` で削除する。
 
 echo "--- ALLOWED_ORIGIN を登録（Plan C のフロント URL 想定） ---"
 printf '%s' "$ALLOWED_ORIGIN_PROD" | wrangler secret put ALLOWED_ORIGIN
@@ -59,13 +59,15 @@ sleep 5
 echo "=== 6. 本番 E2E テスト ==="
 echo ""
 
-echo "--- テスト1: 正常リクエスト（200 + Anthropic テキスト期待、約 \$0.003 課金） ---"
-curl -sv -X POST "${WORKER_URL}/api/describe" \
+echo "--- テスト1: 正常リクエスト（200 + Bedrock Nova Pro 出力期待、約 \$0.001〜0.005 課金） ---"
+# -si で APP_PASSWORD を含む request ヘッダを画面に出さない（-sv は禁止）
+# solar_term は二十四節気の番号文字列（'01'〜'24'、Plan E 以降のスキーマ）
+curl -si -X POST "${WORKER_URL}/api/describe" \
   -H "Content-Type: application/json" \
   -H "X-App-Password: $APP_PASSWORD" \
   -H "Origin: $ALLOWED_ORIGIN_PROD" \
-  -d '{"prefecture":"神奈川県","municipality":"相模原市緑区","season":"spring"}' \
-  2>&1 | grep -E "^(< HTTP|<|{|>)" | head -30
+  -d '{"prefecture":"神奈川県","municipality":"相模原市緑区","solar_term":"07"}' \
+  | head -40
 echo ""
 
 echo "--- テスト2: 認証失敗（401 期待） ---"
