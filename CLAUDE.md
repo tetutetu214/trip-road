@@ -13,25 +13,28 @@ GPS ベースの旅ガイド Webアプリ。電車・徒歩移動中に iPhone S
 - **フロントエンド**: Vanilla JS + HTML + CSS
 - **地図**: Leaflet.js 1.9.4（背景は地理院タイル 淡色地図）
 - **空間演算**: Turf.js（booleanPointInPolygon のみ使用）
-- **バックエンド**: Cloudflare Workers（認証 + Anthropic API プロキシ + Plan E Judge 統合）
-- **LLM (生成)**: Claude Haiku（`claude-haiku-4-5-20251001`）— 土地のたよりを生成
-- **LLM (Judge)**: Claude Sonnet 4.6（`claude-sonnet-4-6` エイリアス）— 4 軸並列で出力を評価し、合格時のみキャッシュ書込（Plan E）
+- **バックエンド**: Cloudflare Workers（認証 + Bedrock Runtime プロキシ + Plan E Judge 統合）
+- **LLM (生成・Judge とも)**: **Amazon Bedrock Nova Pro**（`us.amazon.nova-pro-v1:0` cross-region inference profile） — Plan H で Anthropic Claude（Haiku 4.5 / Sonnet 4.6）から全面移行（2026-05-08）
+  - Generator: temperature 0.7、`maxTokens` 400 を必ず明示
+  - Judge: temperature 0、`maxTokens` 600、4 軸並列、合格時のみフロント localStorage に書込
 - **RAG**: 日本語版 Wikipedia API（`https://ja.wikipedia.org/w/api.php`）— Judge 軸 1（事実正確性）の根拠資料、Workers Cache API で 30 日 TTL
 - **静的配信**: Cloudflare Pages
 - **テレメトリ Sink**: AWS S3（パーティション: `year=YYYY/month=MM/day=DD/`）
-- **データ前処理**: Python 3.12 + geopandas + shapely、Google Cloud Shell 上で実行
-- **パッケージ管理**: wrangler CLI（Cloudflare）、pip（Python）、aws4fetch（Workers から S3 SigV4）
+- **データ前処理**: Python 3.12 + geopandas + shapely、ローカル WSL 上で実行
+- **パッケージ管理**: wrangler CLI（Cloudflare）、pip（Python）、aws4fetch（Workers から S3 / Bedrock の SigV4 署名）
 
 ## 3. インフラ構成
 
 - **Cloudflare Pages**: `public/` ディレクトリを配信、独自ドメイン `trip-road.tetutetu214.com`
 - **Cloudflare Workers**: `workers/` の Worker を `trip-road-api.tetutetu214.com` で配信
-- **Workers Secrets**:
-   - `APP_PASSWORD`（32文字hex）
-   - `ANTHROPIC_API_KEY`（Haiku 生成 + Sonnet Judge で共用）
-   - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` / `S3_TELEMETRY_BUCKET`（テレメトリ Sink 用 IAM）
+- **Workers Secrets**（Plan H 反映後）:
+   - `APP_PASSWORD`（32 文字 hex）
+   - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION`（Bedrock Runtime + S3 共用、IAM ユーザー `trip-road-telemetry-writer`）
+   - `S3_TELEMETRY_BUCKET`（テレメトリ Sink）
+   - `ALLOWED_ORIGIN`（CORS 許可オリジン）
+   - 旧 `ANTHROPIC_API_KEY` は Plan H で削除済
 - **外部 API**:
-   - Anthropic API: Workers 経由でのみ呼出（Haiku 生成 + Sonnet Judge）
+   - Amazon Bedrock Runtime: Workers から SigV4 署名で Converse API 呼出（aws4fetch、modelId は `us.amazon.nova-pro-v1:0` cross-region inference profile）
    - Wikipedia API（ja.wikipedia.org）: Workers から直接、User-Agent 必須、Cache API で 30 日キャッシュ
    - AWS S3: Workers から SigV4 署名付きで PUT（aws4fetch ライブラリ）
    - 国土地理院 逆ジオコーダ: ブラウザから直接（フォールバック用途）
@@ -88,9 +91,15 @@ cd workers && wrangler dev
 # Workers デプロイ
 cd workers && wrangler deploy
 
-# Secrets 設定（初回のみ）
+# Secrets 設定（初回のみ、Plan H 反映後の構成）
 cd workers && wrangler secret put APP_PASSWORD
-cd workers && wrangler secret put ANTHROPIC_API_KEY
+cd workers && wrangler secret put AWS_ACCESS_KEY_ID
+cd workers && wrangler secret put AWS_SECRET_ACCESS_KEY
+cd workers && wrangler secret put AWS_REGION
+cd workers && wrangler secret put S3_TELEMETRY_BUCKET
+cd workers && wrangler secret put ALLOWED_ORIGIN
+# 旧 ANTHROPIC_API_KEY は Plan H 本番反映後に削除：
+# cd workers && wrangler secret delete ANTHROPIC_API_KEY
 
 # Pages デプロイ（public/ を配信）
 wrangler pages deploy public/ --project-name=trip-road

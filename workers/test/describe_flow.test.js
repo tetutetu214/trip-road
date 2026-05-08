@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { generateAndJudge, formatDeductionsForFeedback } from '../src/describe_flow.js';
+import { NOVA_MODEL_ID } from '../src/nova.js';
+import { JUDGE_MODEL } from '../src/judge.js';
 
 const PARSED = {
   prefecture: '神奈川県',
@@ -73,8 +75,67 @@ describe('generateAndJudge', () => {
     expect(result.judge_deductions).toEqual(sampleDeductions);
     expect(result.regenerated).toBe(false);
     expect(result.judge_error).toBeNull();
+    // Plan H: テレメトリ用にモデル ID を返す
+    expect(result.generator_model).toBe(NOVA_MODEL_ID);
+    expect(result.judge_model).toBe(JUDGE_MODEL);
     expect(genCalls).toBe(1);
     expect(judgeCalls).toBe(1);
+  });
+
+  it('Plan H: fail-open / 再生成成功 / 再生成 NG / 再生成エラー の各経路でも generator_model / judge_model が返る', async () => {
+    // (a) fail-open
+    {
+      const generator = async () => ({ ok: true, description: SAMPLE_DESC_1 });
+      const judger = async () => ({
+        passed: null,
+        lengthOk: true,
+        scores: null,
+        deductions: {},
+        error: 'nova down',
+      });
+      const result = await generateAndJudge(PARSED, ENV, {
+        generator,
+        judger,
+        wikipediaFetcher: NULL_WIKIPEDIA_FETCHER,
+      });
+      expect(result.generator_model).toBe(NOVA_MODEL_ID);
+      expect(result.judge_model).toBe(JUDGE_MODEL);
+    }
+    // (b) 再生成成功
+    {
+      const generator = makeGenerator([
+        { ok: true, description: SAMPLE_DESC_1 },
+        { ok: true, description: SAMPLE_DESC_2 },
+      ]);
+      const judger = makeJudger([
+        { passed: false, lengthOk: true, scores: FAILING_SCORES, deductions: {}, error: null },
+        { passed: true, lengthOk: true, scores: PASSING_SCORES, deductions: {}, error: null },
+      ]);
+      const result = await generateAndJudge(PARSED, ENV, {
+        generator,
+        judger,
+        wikipediaFetcher: NULL_WIKIPEDIA_FETCHER,
+      });
+      expect(result.generator_model).toBe(NOVA_MODEL_ID);
+      expect(result.judge_model).toBe(JUDGE_MODEL);
+    }
+    // (c) 再生成エラー → 1 回目を採用
+    {
+      const generator = makeGenerator([
+        { ok: true, description: SAMPLE_DESC_1 },
+        { ok: false, status: 502, detail: 'nova error' },
+      ]);
+      const judger = makeJudger([
+        { passed: false, lengthOk: true, scores: FAILING_SCORES, deductions: {}, error: null },
+      ]);
+      const result = await generateAndJudge(PARSED, ENV, {
+        generator,
+        judger,
+        wikipediaFetcher: NULL_WIKIPEDIA_FETCHER,
+      });
+      expect(result.generator_model).toBe(NOVA_MODEL_ID);
+      expect(result.judge_model).toBe(JUDGE_MODEL);
+    }
   });
 
   it('1 回目 NG → 2 回目合格 → regenerated=true', async () => {

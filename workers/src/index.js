@@ -107,6 +107,8 @@ export default {
           judge_deductions: flow.judge_deductions,
           regenerated: flow.regenerated,
           judge_error: flow.judge_error,
+          generator_model: flow.generator_model,
+          judge_model: flow.judge_model,
         },
         200,
         allowedOrigin,

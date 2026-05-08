@@ -82,6 +82,9 @@ export async function fetchDescription(password, req, opts = {}) {
             judge_deductions: data.judge_deductions ?? null,
             regenerated: data.regenerated ?? false,
             judge_error: data.judge_error ?? null,
+            // Plan H: テレメトリで Plan H 前後の比較が分かるようにモデル ID を保持
+            generator_model: data.generator_model ?? null,
+            judge_model: data.judge_model ?? null,
           };
         }
         lastError = { ok: false, status: res.status, error: 'empty_description' };

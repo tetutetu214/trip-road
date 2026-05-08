@@ -43,6 +43,8 @@ export function generateTraceId() {
  * @param {boolean|null} [args.judge_passed]
  * @param {boolean} [args.regenerated]
  * @param {string|null} [args.judge_error]
+ * @param {string|null} [args.generator_model]  Plan H: 生成に使ったモデル ID（例: "us.amazon.nova-pro-v1:0"）
+ * @param {string|null} [args.judge_model]       Plan H: 評価に使ったモデル ID
  * @returns {object}
  */
 export function buildTelemetryEntry(args) {
@@ -62,6 +64,11 @@ export function buildTelemetryEntry(args) {
     judge_passed: args.judge_passed ?? null,
     regenerated: args.regenerated ?? false,
     judge_error: args.judge_error ?? null,
+
+    // Plan H: モデル別比較ができるようにモデル ID を記録
+    // キャッシュヒット呼出やフロント単独記録時は null
+    generator_model: args.generator_model ?? null,
+    judge_model: args.judge_model ?? null,
 
     // 暗黙シグナル
     ts_displayed: null,

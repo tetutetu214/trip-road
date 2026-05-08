@@ -12,9 +12,15 @@
  * を参照。実装上の判断は docs/knowledge.md 4.11 / 4.18 章を参照。
  */
 
-import { buildGeneratorRequest, callNovaGenerator } from './nova.js';
-import { judgeAll } from './judge.js';
+import { buildGeneratorRequest, callNovaGenerator, NOVA_MODEL_ID } from './nova.js';
+import { judgeAll, JUDGE_MODEL } from './judge.js';
 import { getCachedWikipediaExtract } from './wikipedia.js';
+
+// Plan H: テレメトリで Plan H 前後の比較ができるよう、生成・評価に使ったモデル ID を
+// レスポンス（→ フロント telemetry → S3 entry）に乗せる。
+// Generator と Judge の両方を Nova Pro に統一しているが、将来的に別モデルへ
+// 切替する余地を残すため別フィールドにする。
+const GENERATOR_MODEL = NOVA_MODEL_ID;
 
 // 軸キー → 日本語ラベル（feedback テキスト用）
 const AXIS_LABELS = {
@@ -127,6 +133,8 @@ export async function generateAndJudge(parsed, env, deps = {}) {
       judge_deductions: judge1.deductions,
       regenerated: false,
       judge_error: null,
+      generator_model: GENERATOR_MODEL,
+      judge_model: JUDGE_MODEL,
     };
   }
 
@@ -140,6 +148,8 @@ export async function generateAndJudge(parsed, env, deps = {}) {
       judge_deductions: judge1.deductions ?? {},
       regenerated: false,
       judge_error: judge1.error,
+      generator_model: GENERATOR_MODEL,
+      judge_model: JUDGE_MODEL,
     };
   }
 
@@ -164,6 +174,8 @@ export async function generateAndJudge(parsed, env, deps = {}) {
       judge_deductions: judge1.deductions,
       regenerated: false,
       judge_error: null,
+      generator_model: GENERATOR_MODEL,
+      judge_model: JUDGE_MODEL,
     };
   }
 
@@ -184,5 +196,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
     judge_deductions: judge2.deductions,
     regenerated: true,
     judge_error: judge2.error,
+    generator_model: GENERATOR_MODEL,
+    judge_model: JUDGE_MODEL,
   };
 }

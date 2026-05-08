@@ -54,8 +54,25 @@ describe('buildTelemetryEntry', () => {
     expect(entry.judge_passed).toBeNull();
     expect(entry.regenerated).toBe(false);
     expect(entry.judge_error).toBeNull();
+    // Plan H: モデル ID も既定 null
+    expect(entry.generator_model).toBeNull();
+    expect(entry.judge_model).toBeNull();
     // 廃止フィールドは含まれない
     expect(entry).not.toHaveProperty('critic_meaningfulness');
+  });
+
+  it('Plan H: generator_model / judge_model を渡すと entry に反映される', () => {
+    const entry = buildTelemetryEntry({
+      trace_id: 'test-id',
+      muni_code: '14153',
+      solar_term: '05',
+      description: '相模原市緑区...',
+      ts_generated: 1745000000000,
+      generator_model: 'us.amazon.nova-pro-v1:0',
+      judge_model: 'us.amazon.nova-pro-v1:0',
+    });
+    expect(entry.generator_model).toBe('us.amazon.nova-pro-v1:0');
+    expect(entry.judge_model).toBe('us.amazon.nova-pro-v1:0');
   });
 
   it('Plan E: Judge 結果を渡すと entry に反映される（新規生成時想定）', () => {
