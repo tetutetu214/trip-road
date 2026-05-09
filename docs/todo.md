@@ -1,6 +1,6 @@
 # trip-road タスク一覧
 
-**最終更新**: 2026-05-09（Plan H 本番反映完了。H-1〜H-5/H-7/H-8/H-9/H-10/H-11 完了、H-12 観測フェーズ開始。H-6 プロンプト再チューンは観測判断で保留）
+**最終更新**: 2026-05-09（Plan G-1.5「Judge 軸違い不当減点修正」を当日中にバッチ評価で実装・本番反映、PR #42。合格率 22% → 80%、accuracy 平均 3.38 → 4.88 に改善。実走観測モデルからバッチ curl 評価モデルに H-12 を転換）
 
 ---
 
@@ -416,20 +416,46 @@ Issue #39。Judge プロンプト変更時の暴走検出のための校正用�
   - 認証付き curl で Plan H レスポンス確認（200 / 401 / 404 すべて期待通り、`generator_model` / `judge_model` 到達確認）
   - フロント（public/assets）変更はテレメトリ entry にフィールド追加のみで、既存スキーマと互換 → `bash deploy_frontend.sh` は次回フロントを使うときで十分（Plan H 反映直後の Worker 動作には影響なし）
 
-### H-12: 観測（人間タスク、2026-05-09 開始）
+### H-12: 観測（バッチ評価モデルに転換、2026-05-09 達成）
 
-- [ ] **H-12**: 1〜2 週間の実走 → `fetch_entries.sh` で Plan H 前後比較
-  - 成功条件: accuracy 平均 ≥ 3.0、合格率 ≥ 30%
-  - 観測初期所感（2 件のテストから）:
-    - **accuracy が劇的に改善**（Plan E 期 2.56 → Plan H 期 4〜5）。Wikipedia 抜粋なしでも Nova Pro が地理常識で書ける兆候
-    - specificity / density はまだ低い傾向（汎用フレーズや情緒修飾が残る）→ H-6 プロンプト再チューンの候補
-    - 再生成フロー（NG → 再生成 → 再判定）も正常動作
-  - 未達ならロールバックして Plan G の G-2/G-3/G-4（RAG 拡張）に着手判断
+- [x] **H-12**: 実走観測モデルから `run_sweep.sh` バッチ curl 評価モデルに転換（てつてつ指摘「同じ場所にしか行かないのでサンプルが自然に増えない」を受けて）
+  - 5/9 17:18 に Plan H × G-1 構成で 1 回目スイープ → 合格率 2/9 (22%)、accuracy 平均 3.38、軸違い不当減点が大量観測 → Plan G-1.5 で修正に着手
+  - 5/9 17:29 に Plan G-1.5 反映後の 2 回目スイープ → 合格率 8/10 (80%)、accuracy 平均 4.88、accuracy 軸の不当減点ゼロ、Plan H × G-1 × G-1.5 で **H-12 成功条件（accuracy ≥ 3.0 / 合格率 ≥ 30%）を大幅に超達成**
+  - 詳細は `docs/knowledge.md` 4.23 章
+  - メモリ `project_trip_road_batch_eval.md` に「実走観測ではなくバッチ評価で測る」を恒久記録
 
 ### Plan H 着手で残す将来課題（Plan H 自体には含めない）
 
 - [ ] AWS 公式ベストプラクティスに沿った IAM ロール化（OIDC + `sts:AssumeRoleWithWebIdentity` 経由の短期トークン）。Cloudflare Workers の OIDC 連携実装が必要、PoC スケールでは過剰なので別ブランチで判断
 - [ ] アクセスキーローテーション運用（既存 S3 用キーと同居のため未着手、定期実行スクリプト or イベントトリガで自動化したい）
+
+---
+
+## Plan G-1.5: Judge 軸違い不当減点修正（2026-05-09 完了、PR #42）
+
+詳細は `docs/knowledge.md` 4.23 章を参照。
+
+### 背景
+
+Plan H 反映直後の 5/9 朝に H-12 観測フェーズに入ったが、てつてつから「同じ場所にしか行かない、実走でサンプルは増えない」と指摘。バッチ評価 (`run_sweep.sh`) に転換して 1 回目スイープを叩いたところ、accuracy 軸の deductions ほぼ全件が **軸違い不当減点**（「Wikipedia と重複・冗長」「年号が記載されていないため」など）であることが判明。Plan G-1 で禁じたはずの「記載なし減点」も再発していた。
+
+### 完了タスク
+
+- [x] **G-1.5-1** `docs/analysis/run_sweep.sh` 新設: 神奈川 10 市町村に curl で `/api/describe` を順次 POST、JSONL 集約、軸別平均と合格率と accuracy 軸 deductions を表示
+- [x] **G-1.5-2** `workers/src/judge_prompts.js` の `buildFactualityPrompt` に「【この軸で評価する】」「【この軸で評価しない（他軸の責任）】」の明示分離を追加
+- [x] **G-1.5-3** Few-shot を 3 → 5 例に拡張（例 C: Wikipedia 重複だが事実は正しい / 例 D: 季節矛盾だが accuracy では減点しない、いずれも 5 点）
+- [x] **G-1.5-4** `workers/test/judge_prompts.test.js` に Few-shot 例 C / 例 D / 軸違い分離セクションのアサーション追加（軸 1 関連 18 件 / worker 全体 134 件 pass）
+- [x] **G-1.5-5** `bash workers/deploy_production.sh` で本番反映（Worker Version `743563fe-6f67-4635-8c7e-a0ee43e61efe`）
+- [x] **G-1.5-6** 2 回目スイープで before/after 比較: 合格率 22% → 80%、accuracy 平均 3.38 → 4.88、accuracy 軸の不当減点ゼロを確認
+- [x] **G-1.5-7** PR #42 作成
+- [ ] **G-1.5-8** PR #42 main マージ（てつてつ判断）
+
+### 残課題（Plan G-1.5 の対象外、別 Issue 候補）
+
+- [ ] **Generator 出力長 NG**: スイープ 10 件中 2 件（鎌倉市 110 字 / 相模原市緑区 113 字）が文字数下限 120 字を割って機械判定で NG。Generator プロンプトの「120〜180 字」指示の強化、または下限緩和
+- [ ] **specificity / density が低め**（2.75 / 2.88）: 「初夏の気配」「新緑が鮮やか」など汎用フレーズが残る。Generator 側強化（Wikipedia 抜粋活用 / 固有名詞要求）または specificity / density 軸の Few-shot 強化
+- [ ] **真鶴町の保守的判定**: 「真鶴半島とその周辺からなる」を Wikipedia「町域の半分は三方を海に囲まれる」と直接矛盾と判定。観測続けて頻発するなら例 F の追加検討
+- [ ] **Judge meta-eval セット (G-5)**: プロンプト変更時の暴走検出用の手動ラベル付き 20–30 件を作成、`run_sweep.sh` と並ぶ検証手段として整備
 
 ---
 
