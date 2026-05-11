@@ -3,7 +3,6 @@
  * DOMContentLoaded で初期化、状態遷移を管理。
  */
 
-import { getSolarTerm } from './season.js';
 import {
   loadState,
   savePassword,
@@ -30,7 +29,8 @@ import {
   showPasswordScreen, showMainScreen,
   showPasswordError, clearPasswordError,
   setMuniName, setMuniRomaji, setSpeed, setVisitedCount,
-  setDescription, setDescriptionLoading, setDescriptionLoadingPhase, setDescriptionFailed, clearDescription,
+  setDescription, setDescriptionLoading, setDescriptionLoadingPhase, setDescriptionFailed,
+  setDescriptionNoWikipedia, clearDescription,
   setGpsActive, setPermissionDenied,
   setDebugInfo,
 } from './ui.js';
@@ -108,14 +108,13 @@ async function enterMainApp(password) {
   const state = loadState();
   if (state.track.length > 0) setTrack(state.track);
 
-  // 既存の現在地情報を表示（キャッシュ済解説があれば）
+  // 既存の現在地情報を表示（キャッシュ済要約があれば）
   if (currentMuniCd && state.visited[currentMuniCd]) {
     const v = state.visited[currentMuniCd];
     setMuniName(v.name);
-    const cached = getCachedDescription(currentMuniCd, getSolarTerm());
+    const cached = getCachedDescription(currentMuniCd);
     if (cached) {
       setDescription(cached);
-      // Plan E (6.5b): 初期表示も cached 状態としてデバッグ表示を出す
       currentJudgeData = { cached: true };
       setDebugInfo(currentJudgeData, isDebugOn());
     }
@@ -210,9 +209,8 @@ async function handlePosition({ lat, lon, speed }, password) {
     // プリフェッチ
     prefetchNeighbors(muni.code);
 
-    // LLM 呼出 or キャッシュ
-    const solarTerm = getSolarTerm();
-    const cached = getCachedDescription(muni.code, solarTerm);
+    // Plan I: キャッシュは市町村コード単一キー
+    const cached = getCachedDescription(muni.code);
 
     // 直前 entry の離脱情報を確定（市町村が切り替わるタイミング）
     finalizeCurrentTelemetry();
@@ -222,21 +220,16 @@ async function handlePosition({ lat, lon, speed }, password) {
     currentTraceId = sampled ? generateTraceId() : null;
     currentDisplayStartMs = null;
 
-    // 確定した直前 entry を即 S3 へ送信（currentTraceId は新しい id なので、
-    // フィルタで現在表示中のものは送られず、確定済みの entry だけが対象になる）
     tryFlushTelemetry(password);
 
     if (cached) {
       setDescription(cached);
-      // Plan E (6.5b): キャッシュヒット時はデバッグ表示も「cached」状態に更新
       currentJudgeData = { cached: true };
       setDebugInfo(currentJudgeData, isDebugOn());
-      // キャッシュヒットも記録（読まれた事実は同じ）
       if (currentTraceId) {
         appendTelemetry(buildTelemetryEntry({
           trace_id: currentTraceId,
           muni_code: muni.code,
-          solar_term: solarTerm,
           description: cached,
           ts_generated: Date.now(),
         }));
@@ -250,60 +243,71 @@ async function handlePosition({ lat, lon, speed }, password) {
         {
           prefecture: muni.prefecture,
           municipality: muni.name,
-          solar_term: solarTerm,
         },
         {
-          // Plan E (6.5): 経過時間で「生成中」→「確認中」→「書き直し中」に文言切替
           onPhaseChange: (phase) => setDescriptionLoadingPhase(phase),
         },
       );
       if (result.ok) {
-        // Plan E (6.4): judge_passed===true のときだけキャッシュに書く。
-        // false（NG）or null（fail-open）は表示はするが localStorage には書かない
-        // → 次回同じ市町村に来たら再度 Workers を呼んで生成し直す
-        if (result.judge_passed === true) {
-          setCachedDescription(muni.code, solarTerm, result.description);
-        }
-        // Plan E (6.5): regenerated=true のときは表示直前に 0.3 秒だけ「✏️」を残す（演出）
-        if (result.regenerated === true) {
-          setDescriptionLoadingPhase('regenerating');
-          await new Promise((r) => setTimeout(r, 300));
-        }
-        setDescription(result.description);
-        // Plan E (6.5b): 新規生成時の判定情報をデバッグ表示用に保持
-        currentJudgeData = {
-          judge_passed: result.judge_passed,
-          judge_scores: result.judge_scores,
-          judge_deductions: result.judge_deductions,
-          regenerated: result.regenerated,
-          judge_error: result.judge_error,
-        };
-        setDebugInfo(currentJudgeData, isDebugOn());
-        // 新規生成を記録（Judge スコア付き）
-        if (currentTraceId) {
-          appendTelemetry(buildTelemetryEntry({
-            trace_id: currentTraceId,
-            muni_code: muni.code,
-            solar_term: solarTerm,
-            description: result.description,
-            ts_generated: Date.now(),
-            critic_accuracy: result.judge_scores?.accuracy ?? null,
-            critic_specificity: result.judge_scores?.specificity ?? null,
-            critic_season_fit: result.judge_scores?.season_fit ?? null,
-            critic_density: result.judge_scores?.density ?? null,
-            critic_deductions: result.judge_deductions ?? null,
+        // Plan I: Wikipedia 抜粋なし → 「記事なし」を表示、キャッシュには書かない
+        if (result.no_wikipedia) {
+          setDescriptionNoWikipedia();
+          currentJudgeData = { no_wikipedia: true };
+          setDebugInfo(currentJudgeData, isDebugOn());
+          if (currentTraceId) {
+            appendTelemetry(buildTelemetryEntry({
+              trace_id: currentTraceId,
+              muni_code: muni.code,
+              description: '',
+              ts_generated: Date.now(),
+              no_wikipedia: true,
+              wikipedia_extract_length: 0,
+              generator_model: result.generator_model,
+              judge_model: result.judge_model,
+            }));
+            currentDisplayStartMs = Date.now();
+            updateTelemetry(currentTraceId, { ts_displayed: currentDisplayStartMs });
+          }
+        } else {
+          // Plan I: judge_passed===true のときだけキャッシュに書く
+          if (result.judge_passed === true) {
+            setCachedDescription(muni.code, result.description);
+          }
+          if (result.regenerated === true) {
+            setDescriptionLoadingPhase('regenerating');
+            await new Promise((r) => setTimeout(r, 300));
+          }
+          setDescription(result.description);
+          currentJudgeData = {
             judge_passed: result.judge_passed,
+            faithfulness_score: result.faithfulness_score,
+            out_of_kb_terms: result.out_of_kb_terms,
             regenerated: result.regenerated,
+            fallback_to_extract: result.fallback_to_extract,
             judge_error: result.judge_error,
-            // Plan H: テレメトリでモデル別比較ができるようモデル ID を保存
-            generator_model: result.generator_model ?? null,
-            judge_model: result.judge_model ?? null,
-          }));
-          currentDisplayStartMs = Date.now();
-          updateTelemetry(currentTraceId, { ts_displayed: currentDisplayStartMs });
+          };
+          setDebugInfo(currentJudgeData, isDebugOn());
+          if (currentTraceId) {
+            appendTelemetry(buildTelemetryEntry({
+              trace_id: currentTraceId,
+              muni_code: muni.code,
+              description: result.description,
+              ts_generated: Date.now(),
+              faithfulness_score: result.faithfulness_score,
+              out_of_kb_terms: result.out_of_kb_terms,
+              judge_passed: result.judge_passed,
+              regenerated: result.regenerated,
+              fallback_to_extract: result.fallback_to_extract,
+              wikipedia_extract_length: result.wikipedia_extract_length,
+              judge_error: result.judge_error,
+              generator_model: result.generator_model,
+              judge_model: result.judge_model,
+            }));
+            currentDisplayStartMs = Date.now();
+            updateTelemetry(currentTraceId, { ts_displayed: currentDisplayStartMs });
+          }
         }
       } else if (result.status === 401) {
-        // パスワード誤り
         clearPassword();
         clearDescription();
         setupPasswordScreen();

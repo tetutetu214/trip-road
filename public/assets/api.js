@@ -1,5 +1,10 @@
 /**
- * Workers API `/api/describe` を呼び出す。3 回まで指数バックオフで再試行。
+ * Workers API `/api/describe` を呼び出す（Plan I）。3 回まで指数バックオフで再試行。
+ *
+ * Plan I（2026-05-11）でレスポンススキーマ刷新:
+ *   - judge_scores / judge_deductions → faithfulness_score / out_of_kb_terms
+ *   - no_wikipedia / fallback_to_extract / wikipedia_extract_length を追加
+ *   - solar_term はリクエストから廃止
  */
 import { API_BASE_URL } from './config.js';
 
@@ -10,24 +15,17 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 /**
  * 土地のたよりを取得する。
  *
- * Plan E (Phase 6.4) で Workers レスポンスに judge_passed / judge_scores /
- * judge_deductions / regenerated / judge_error が含まれるようになった。
- * ここではそれらをそのまま戻り値に乗せ、判定ロジックは呼び出し側（app.js）が担う。
- *
- * Plan E (Phase 6.5) で onPhaseChange コールバック対応。
- * 経過時間 2 秒 / 5 秒のタイミングで呼び出され、UI 文言の段階表示に使う。
- *
  * @param {string} password - X-App-Password に送る値
- * @param {{prefecture: string, municipality: string, solar_term: string}} req
- *   solar_term は二十四節気の番号文字列（'01'〜'24'）
+ * @param {{prefecture: string, municipality: string}} req
  * @param {object} [opts]
  * @param {(phase: 'judging'|'regenerating') => void} [opts.onPhaseChange]
  *   2 秒経過で 'judging'、5 秒経過で 'regenerating' を発火。
- *   レスポンス到着で内部タイマーをクリア（クリア後は呼ばない）。
  * @returns {Promise<
- *   | {ok: true, description: string, judge_passed: boolean|null,
- *      judge_scores: object|null, judge_deductions: object|null,
- *      regenerated: boolean, judge_error: string|null}
+ *   | {ok: true, description: string, no_wikipedia: boolean,
+ *      judge_passed: boolean|null, faithfulness_score: number|null,
+ *      out_of_kb_terms: string[], regenerated: boolean, fallback_to_extract: boolean,
+ *      wikipedia_extract_length: number|null, judge_error: string|null,
+ *      generator_model: string|null, judge_model: string|null}
  *   | {ok: false, status: number, error: string}
  * >}
  */
@@ -35,8 +33,6 @@ export async function fetchDescription(password, req, opts = {}) {
   const { onPhaseChange } = opts;
   let lastError = { ok: false, status: 0, error: 'unknown' };
 
-  // 段階表示タイマー：fetch 開始から経過時間で文言を切り替える
-  // タイマーは fetch 完了 / エラー / 全リトライ終了で必ずクリア
   const timers = [];
   const startTimers = () => {
     if (typeof onPhaseChange !== 'function') return;
@@ -72,17 +68,20 @@ export async function fetchDescription(password, req, opts = {}) {
       }
       if (res.ok) {
         const data = await res.json();
-        if (data?.description) {
+        // Plan I: no_wikipedia=true のときは description が空文字でも成功扱い
+        if (data?.no_wikipedia || data?.description) {
           clearTimers();
           return {
             ok: true,
-            description: data.description,
+            description: data.description ?? '',
+            no_wikipedia: data.no_wikipedia ?? false,
             judge_passed: data.judge_passed ?? null,
-            judge_scores: data.judge_scores ?? null,
-            judge_deductions: data.judge_deductions ?? null,
+            faithfulness_score: data.faithfulness_score ?? null,
+            out_of_kb_terms: Array.isArray(data.out_of_kb_terms) ? data.out_of_kb_terms : [],
             regenerated: data.regenerated ?? false,
+            fallback_to_extract: data.fallback_to_extract ?? false,
+            wikipedia_extract_length: data.wikipedia_extract_length ?? null,
             judge_error: data.judge_error ?? null,
-            // Plan H: テレメトリで Plan H 前後の比較が分かるようにモデル ID を保持
             generator_model: data.generator_model ?? null,
             judge_model: data.judge_model ?? null,
           };
@@ -95,7 +94,6 @@ export async function fetchDescription(password, req, opts = {}) {
       lastError = { ok: false, status: 0, error: String(e) };
     }
 
-    // 最後の試行でなければ待機して再試行
     if (attempt < RETRY_DELAYS_MS.length) {
       await sleep(RETRY_DELAYS_MS[attempt]);
     }
@@ -107,11 +105,7 @@ export async function fetchDescription(password, req, opts = {}) {
 
 /**
  * テレメトリバッチを Workers `/api/telemetry` に送る。
- * 失敗時は 1 回だけリトライ（2 秒後）、それ以上は呼出側で諦める（次回 flush で再送）。
- *
- * @param {string} password - X-App-Password に送る値
- * @param {Array<object>} entries - 送信する entry 配列（非空）
- * @returns {Promise<{ok: true, key: string} | {ok: false, status: number, error: string}>}
+ * 失敗時は 1 回だけリトライ（2 秒後）。
  */
 export async function sendTelemetryBatch(password, entries) {
   let lastError = { ok: false, status: 0, error: 'unknown' };

@@ -57,14 +57,24 @@ describe('visited helpers', () => {
   });
 });
 
-describe('description cache', () => {
-  it('setCachedDescription / getCachedDescription（節気番号キー）', () => {
+describe('description cache（Plan I: 市町村ごと単一の要約）', () => {
+  it('setCachedDescription / getCachedDescription', () => {
     markVisited('14151', '相模原市緑区', '神奈川県');
-    expect(getCachedDescription('14151', '07')).toBeNull();   // 立夏
-    setCachedDescription('14151', '07', '緑区は…');
-    expect(getCachedDescription('14151', '07')).toBe('緑区は…');
-    // 違う節気はまだ null
-    expect(getCachedDescription('14151', '13')).toBeNull();   // 立秋
+    expect(getCachedDescription('14151')).toBeNull();
+    setCachedDescription('14151', '緑区は…');
+    expect(getCachedDescription('14151')).toBe('緑区は…');
+  });
+
+  it('setCachedDescription で上書きできる', () => {
+    markVisited('14151', '相模原市緑区', '神奈川県');
+    setCachedDescription('14151', '旧テキスト');
+    setCachedDescription('14151', '新テキスト');
+    expect(getCachedDescription('14151')).toBe('新テキスト');
+  });
+
+  it('markVisited なしの市町村は setCachedDescription しても無視される', () => {
+    setCachedDescription('99999', 'orphan');
+    expect(getCachedDescription('99999')).toBeNull();
   });
 });
 
@@ -119,5 +129,4 @@ describe('telemetry helpers', () => {
     expect(getTelemetryCount()).toBe(1);
     expect(getTelemetryBatch(10)[0].trace_id).toBe('b');
   });
-
 });
