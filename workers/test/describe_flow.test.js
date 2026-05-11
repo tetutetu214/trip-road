@@ -1,27 +1,37 @@
 import { describe, it, expect } from 'vitest';
-import { generateAndJudge, formatDeductionsForFeedback } from '../src/describe_flow.js';
+import {
+  generateAndJudge,
+  formatOutOfKbTermsForFeedback,
+  truncateExtractForFallback,
+} from '../src/describe_flow.js';
 import { NOVA_MODEL_ID } from '../src/nova.js';
 import { JUDGE_MODEL } from '../src/judge.js';
 
 const PARSED = {
   prefecture: '神奈川県',
-  municipality: '相模原市緑区',
-  solar_term: '05',
+  municipality: '海老名市',
 };
 
 const ENV = { AWS_ACCESS_KEY_ID: 'AKIAEXAMPLE', AWS_SECRET_ACCESS_KEY: 'examplesecret' };
 
+const SAMPLE_EXTRACT =
+  '海老名市は、神奈川県中部の県央地域に位置する市である。神奈川県の中央部に位置する。';
 const SAMPLE_DESC_1 =
-  '相模原市緑区は、神奈川県北部の山岳地帯に位置します。津久井湖と相模湖を抱え、蛭ヶ岳（神奈川県最高峰）が西部にそびえる丹沢山地の一部です。江戸期は甲州街道の小原宿や与瀬宿が置かれ、養蚕業や林業が栄えました。清明の頃は津久井湖でヤマザクラが見頃。';
+  '海老名市は神奈川県中部の県央地域に位置する市です。市内には小田急線と JR 相模線が交差する海老名駅があります。';
 const SAMPLE_DESC_2 =
-  '相模原市緑区は丹沢山地を擁する神奈川県最大の区。津久井湖・相模湖・宮ヶ瀬湖の水源地で、蛭ヶ岳（標高1673m）は神奈川県最高峰。江戸期は甲州街道の宿場（小原宿・与瀬宿）と養蚕業で栄え、清明の頃の城山公園はヤマザクラの名所。';
+  '海老名市は神奈川県中部の県央地域に位置する市で、神奈川県の中央部に位置します。県央地域の中心都市の一つです。';
 
-const PASSING_SCORES = { accuracy: 5, specificity: 5, season_fit: 5, density: 5 };
-const FAILING_SCORES = { accuracy: 5, specificity: 3, season_fit: 5, density: 5 };
+const PASSING = { passed: true, lengthOk: true, score: 5, out_of_kb_terms: [], error: null };
+const FAILING = {
+  passed: false,
+  lengthOk: true,
+  score: 3,
+  out_of_kb_terms: ['小田急線', 'JR 相模線', '海老名駅'],
+  error: null,
+};
 
-// F-1.3b: 既存テストでは Wikipedia 取得をモックして null を返させる。
-// 実 fetch を呼ばずに decribe_flow の本筋の振る舞いだけを検証するため。
-const NULL_WIKIPEDIA_FETCHER = async () => null;
+const EXTRACT_FETCHER = async () => SAMPLE_EXTRACT;
+const NULL_FETCHER = async () => null;
 
 function makeGenerator(sequence) {
   let i = 0;
@@ -42,100 +52,70 @@ function makeJudger(sequence) {
 }
 
 describe('generateAndJudge', () => {
-  it('1 回目で合格 → regenerated=false、再生成は呼ばれない', async () => {
+  it('Wikipedia 抜粋なし → Generator を呼ばずに no_wikipedia=true で早期リターン', async () => {
     let genCalls = 0;
     let judgeCalls = 0;
-    const sampleDeductions = {
-      accuracy: [],
-      specificity: [],
-      season_fit: [],
-      density: [],
-    };
     const generator = async () => {
       genCalls++;
       return { ok: true, description: SAMPLE_DESC_1 };
     };
     const judger = async () => {
       judgeCalls++;
-      return {
-        passed: true,
-        lengthOk: true,
-        scores: PASSING_SCORES,
-        deductions: sampleDeductions,
-        error: null,
-      };
+      return PASSING;
     };
 
-    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher: NULL_WIKIPEDIA_FETCHER });
+    const result = await generateAndJudge(PARSED, ENV, {
+      generator,
+      judger,
+      wikipediaFetcher: NULL_FETCHER,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.no_wikipedia).toBe(true);
+    expect(result.description).toBe('');
+    expect(result.judge_passed).toBeNull();
+    expect(result.faithfulness_score).toBeNull();
+    expect(result.out_of_kb_terms).toEqual([]);
+    expect(result.fallback_to_extract).toBe(false);
+    expect(result.wikipedia_extract_length).toBe(0);
+    expect(result.generator_model).toBe(NOVA_MODEL_ID);
+    expect(result.judge_model).toBe(JUDGE_MODEL);
+    expect(genCalls).toBe(0); // Generator は呼ばれない
+    expect(judgeCalls).toBe(0);
+  });
+
+  it('1 回目で合格 → regenerated=false、fallback_to_extract=false', async () => {
+    let genCalls = 0;
+    let judgeCalls = 0;
+    const generator = async () => {
+      genCalls++;
+      return { ok: true, description: SAMPLE_DESC_1 };
+    };
+    const judger = async () => {
+      judgeCalls++;
+      return PASSING;
+    };
+
+    const result = await generateAndJudge(PARSED, ENV, {
+      generator,
+      judger,
+      wikipediaFetcher: EXTRACT_FETCHER,
+    });
 
     expect(result.ok).toBe(true);
     expect(result.description).toBe(SAMPLE_DESC_1);
+    expect(result.no_wikipedia).toBeUndefined();
     expect(result.judge_passed).toBe(true);
-    expect(result.judge_scores).toEqual(PASSING_SCORES);
-    expect(result.judge_deductions).toEqual(sampleDeductions);
+    expect(result.faithfulness_score).toBe(5);
+    expect(result.out_of_kb_terms).toEqual([]);
     expect(result.regenerated).toBe(false);
+    expect(result.fallback_to_extract).toBe(false);
+    expect(result.wikipedia_extract_length).toBe(SAMPLE_EXTRACT.length);
     expect(result.judge_error).toBeNull();
-    // Plan H: テレメトリ用にモデル ID を返す
     expect(result.generator_model).toBe(NOVA_MODEL_ID);
     expect(result.judge_model).toBe(JUDGE_MODEL);
     expect(genCalls).toBe(1);
     expect(judgeCalls).toBe(1);
-  });
-
-  it('Plan H: fail-open / 再生成成功 / 再生成 NG / 再生成エラー の各経路でも generator_model / judge_model が返る', async () => {
-    // (a) fail-open
-    {
-      const generator = async () => ({ ok: true, description: SAMPLE_DESC_1 });
-      const judger = async () => ({
-        passed: null,
-        lengthOk: true,
-        scores: null,
-        deductions: {},
-        error: 'nova down',
-      });
-      const result = await generateAndJudge(PARSED, ENV, {
-        generator,
-        judger,
-        wikipediaFetcher: NULL_WIKIPEDIA_FETCHER,
-      });
-      expect(result.generator_model).toBe(NOVA_MODEL_ID);
-      expect(result.judge_model).toBe(JUDGE_MODEL);
-    }
-    // (b) 再生成成功
-    {
-      const generator = makeGenerator([
-        { ok: true, description: SAMPLE_DESC_1 },
-        { ok: true, description: SAMPLE_DESC_2 },
-      ]);
-      const judger = makeJudger([
-        { passed: false, lengthOk: true, scores: FAILING_SCORES, deductions: {}, error: null },
-        { passed: true, lengthOk: true, scores: PASSING_SCORES, deductions: {}, error: null },
-      ]);
-      const result = await generateAndJudge(PARSED, ENV, {
-        generator,
-        judger,
-        wikipediaFetcher: NULL_WIKIPEDIA_FETCHER,
-      });
-      expect(result.generator_model).toBe(NOVA_MODEL_ID);
-      expect(result.judge_model).toBe(JUDGE_MODEL);
-    }
-    // (c) 再生成エラー → 1 回目を採用
-    {
-      const generator = makeGenerator([
-        { ok: true, description: SAMPLE_DESC_1 },
-        { ok: false, status: 502, detail: 'nova error' },
-      ]);
-      const judger = makeJudger([
-        { passed: false, lengthOk: true, scores: FAILING_SCORES, deductions: {}, error: null },
-      ]);
-      const result = await generateAndJudge(PARSED, ENV, {
-        generator,
-        judger,
-        wikipediaFetcher: NULL_WIKIPEDIA_FETCHER,
-      });
-      expect(result.generator_model).toBe(NOVA_MODEL_ID);
-      expect(result.judge_model).toBe(JUDGE_MODEL);
-    }
   });
 
   it('1 回目 NG → 2 回目合格 → regenerated=true', async () => {
@@ -143,48 +123,43 @@ describe('generateAndJudge', () => {
       { ok: true, description: SAMPLE_DESC_1 },
       { ok: true, description: SAMPLE_DESC_2 },
     ]);
-    const judger = makeJudger([
-      { passed: false, lengthOk: true, scores: FAILING_SCORES, deductions: {}, error: null },
-      { passed: true, lengthOk: true, scores: PASSING_SCORES, deductions: {}, error: null },
-    ]);
+    const judger = makeJudger([FAILING, PASSING]);
 
-    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher: NULL_WIKIPEDIA_FETCHER });
+    const result = await generateAndJudge(PARSED, ENV, {
+      generator,
+      judger,
+      wikipediaFetcher: EXTRACT_FETCHER,
+    });
 
     expect(result.ok).toBe(true);
-    expect(result.description).toBe(SAMPLE_DESC_2); // 再生成版が返る
+    expect(result.description).toBe(SAMPLE_DESC_2);
     expect(result.judge_passed).toBe(true);
-    expect(result.judge_scores).toEqual(PASSING_SCORES);
     expect(result.regenerated).toBe(true);
-    expect(result.judge_error).toBeNull();
+    expect(result.fallback_to_extract).toBe(false);
   });
 
-  it('1 回目 NG → 2 回目も NG → regenerated=true、判定は false で返す（採用された 2 回目の deductions が乗る）', async () => {
-    const deductions2 = {
-      accuracy: [],
-      specificity: ['桜が美しい（汎用）'],
-      season_fit: [],
-      density: [],
-    };
+  it('1 回目 NG → 2 回目も NG → Wikipedia 抜粋転載へフォールバック', async () => {
     const generator = makeGenerator([
       { ok: true, description: SAMPLE_DESC_1 },
       { ok: true, description: SAMPLE_DESC_2 },
     ]);
-    const judger = makeJudger([
-      { passed: false, lengthOk: true, scores: FAILING_SCORES, deductions: {}, error: null },
-      { passed: false, lengthOk: true, scores: FAILING_SCORES, deductions: deductions2, error: null },
-    ]);
+    const judger = makeJudger([FAILING, FAILING]);
 
-    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher: NULL_WIKIPEDIA_FETCHER });
+    const result = await generateAndJudge(PARSED, ENV, {
+      generator,
+      judger,
+      wikipediaFetcher: EXTRACT_FETCHER,
+    });
 
     expect(result.ok).toBe(true);
-    expect(result.description).toBe(SAMPLE_DESC_2); // NG でも 2 回目を採用（より新しい試行）
-    expect(result.judge_passed).toBe(false);
+    expect(result.fallback_to_extract).toBe(true);
+    // 抜粋がそのまま description として返る（180 字以下のため）
+    expect(result.description).toBe(SAMPLE_EXTRACT);
     expect(result.regenerated).toBe(true);
-    expect(result.judge_deductions).toEqual(deductions2); // 採用された judge2 の deductions
-    expect(result.judge_error).toBeNull();
+    expect(result.judge_passed).toBe(false);
   });
 
-  it('Sonnet 障害（fail-open）→ 再生成しない、生成出力をそのまま返す', async () => {
+  it('Judge 障害（fail-open）→ 再生成しない、1 回目の生成出力をそのまま返す', async () => {
     let genCalls = 0;
     const generator = async () => {
       genCalls++;
@@ -193,148 +168,64 @@ describe('generateAndJudge', () => {
     const judger = async () => ({
       passed: null,
       lengthOk: true,
-      scores: null,
-      deductions: {},
-      error: 'sonnet down',
+      score: null,
+      out_of_kb_terms: [],
+      error: 'nova down',
     });
 
-    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher: NULL_WIKIPEDIA_FETCHER });
+    const result = await generateAndJudge(PARSED, ENV, {
+      generator,
+      judger,
+      wikipediaFetcher: EXTRACT_FETCHER,
+    });
 
     expect(result.ok).toBe(true);
     expect(result.description).toBe(SAMPLE_DESC_1);
     expect(result.judge_passed).toBeNull();
-    expect(result.judge_scores).toBeNull();
     expect(result.regenerated).toBe(false);
-    expect(result.judge_error).toBe('sonnet down');
-    expect(genCalls).toBe(1); // 再生成しない
+    expect(result.fallback_to_extract).toBe(false);
+    expect(result.judge_error).toBe('nova down');
+    expect(genCalls).toBe(1);
   });
 
   it('1 回目 NG → 再生成 generator がエラー → 1 回目を返す（regenerated=false）', async () => {
     const generator = makeGenerator([
       { ok: true, description: SAMPLE_DESC_1 },
-      { ok: false, status: 502, detail: 'haiku error' },
+      { ok: false, status: 502, detail: 'nova error' },
     ]);
-    const judger = makeJudger([
-      { passed: false, lengthOk: true, scores: FAILING_SCORES, deductions: {}, error: null },
-    ]);
+    const judger = makeJudger([FAILING]);
 
-    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher: NULL_WIKIPEDIA_FETCHER });
+    const result = await generateAndJudge(PARSED, ENV, {
+      generator,
+      judger,
+      wikipediaFetcher: EXTRACT_FETCHER,
+    });
 
     expect(result.ok).toBe(true);
-    expect(result.description).toBe(SAMPLE_DESC_1); // 1 回目を返す
-    expect(result.judge_passed).toBe(false); // 1 回目の判定を維持
-    expect(result.regenerated).toBe(false); // 再生成は試したが採用していないので false
-    expect(result.judge_scores).toEqual(FAILING_SCORES);
+    expect(result.description).toBe(SAMPLE_DESC_1);
+    expect(result.judge_passed).toBe(false);
+    expect(result.regenerated).toBe(false);
+    expect(result.fallback_to_extract).toBe(false);
   });
 
-  it('1 回目の生成自体がエラー → ok=false（502 系の上位応答用）', async () => {
-    const generator = async () => ({ ok: false, status: 502, detail: 'haiku down' });
+  it('1 回目の生成自体がエラー → ok=false', async () => {
+    const generator = async () => ({ ok: false, status: 502, detail: 'nova down' });
     const judger = async () => {
       throw new Error('should not be called');
     };
 
-    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher: NULL_WIKIPEDIA_FETCHER });
+    const result = await generateAndJudge(PARSED, ENV, {
+      generator,
+      judger,
+      wikipediaFetcher: EXTRACT_FETCHER,
+    });
 
     expect(result.ok).toBe(false);
     expect(result.status).toBe(502);
-    expect(result.detail).toContain('haiku down');
+    expect(result.detail).toContain('nova down');
   });
 
-  it('Plan E (6.4d): 1 回目 NG → 2 回目生成の messagesReq に judge1 deductions が feedback として含まれる', async () => {
-    const judge1Deductions = {
-      accuracy: [],
-      specificity: ['桜が美しい（汎用）', '自然豊かな景観（汎用）'],
-      season_fit: [],
-      density: ['淡紅色に染まり（情緒）'],
-    };
-    const generatorCalls = [];
-    const generator = async (messagesReq) => {
-      generatorCalls.push(messagesReq);
-      const idx = generatorCalls.length;
-      return {
-        ok: true,
-        description: idx === 1 ? SAMPLE_DESC_1 : SAMPLE_DESC_2,
-      };
-    };
-    const judger = makeJudger([
-      { passed: false, lengthOk: true, scores: FAILING_SCORES, deductions: judge1Deductions, error: null },
-      { passed: true, lengthOk: true, scores: PASSING_SCORES, deductions: {}, error: null },
-    ]);
-
-    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher: NULL_WIKIPEDIA_FETCHER });
-
-    expect(result.ok).toBe(true);
-    expect(result.regenerated).toBe(true);
-    expect(generatorCalls).toHaveLength(2);
-
-    // 1 回目はフィードバックなし（プレーンな user content）
-    expect(generatorCalls[0].messages[0].content[0].text).not.toContain('指摘');
-
-    // 2 回目は judge1 の deductions が feedback として含まれている
-    const secondUserContent = generatorCalls[1].messages[0].content[0].text;
-    expect(secondUserContent).toContain('指摘');
-    expect(secondUserContent).toContain('桜が美しい（汎用）');
-    expect(secondUserContent).toContain('自然豊かな景観（汎用）');
-    expect(secondUserContent).toContain('淡紅色に染まり（情緒）');
-    expect(secondUserContent).toMatch(/書き直し|書き直/);
-  });
-
-  it('F-1.3b: Wikipedia 抜粋ありの場合、1 回目 generator の messagesReq に [Wikipedia 抜粋] セクションが入る', async () => {
-    const extract = '相模原市は、神奈川県北部に位置する政令指定都市である。';
-    const wikipediaFetcher = async () => extract;
-    const generatorCalls = [];
-    const generator = async (messagesReq) => {
-      generatorCalls.push(messagesReq);
-      return { ok: true, description: SAMPLE_DESC_1 };
-    };
-    const judger = async () => ({
-      passed: true,
-      lengthOk: true,
-      scores: PASSING_SCORES,
-      deductions: {},
-      error: null,
-    });
-
-    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher });
-
-    expect(result.ok).toBe(true);
-    expect(generatorCalls).toHaveLength(1);
-    const userContent = generatorCalls[0].messages[0].content[0].text;
-    expect(userContent).toContain('[Wikipedia 抜粋]');
-    expect(userContent).toContain('政令指定都市');
-  });
-
-  it('F-1.3b: Wikipedia 抜粋 null の場合、generator の messagesReq に [Wikipedia 抜粋] セクションが入らない', async () => {
-    const generatorCalls = [];
-    const generator = async (messagesReq) => {
-      generatorCalls.push(messagesReq);
-      return { ok: true, description: SAMPLE_DESC_1 };
-    };
-    const judger = async () => ({
-      passed: true,
-      lengthOk: true,
-      scores: PASSING_SCORES,
-      deductions: {},
-      error: null,
-    });
-
-    await generateAndJudge(PARSED, ENV, {
-      generator,
-      judger,
-      wikipediaFetcher: NULL_WIKIPEDIA_FETCHER,
-    });
-
-    const userContent = generatorCalls[0].messages[0].content[0].text;
-    expect(userContent).not.toContain('[Wikipedia 抜粋]');
-  });
-
-  it('F-1.3b: 再生成時も 1 回目と同じ Wikipedia 抜粋が 2 回目 generator の messagesReq に含まれる（再取得しない）', async () => {
-    const extract = '海老名市は、神奈川県中部に位置する都市である。';
-    let fetchCalls = 0;
-    const wikipediaFetcher = async () => {
-      fetchCalls++;
-      return extract;
-    };
+  it('再生成プロンプトに 1 回目 judge の out_of_kb_terms が feedback として入る', async () => {
     const generatorCalls = [];
     const generator = async (messagesReq) => {
       generatorCalls.push(messagesReq);
@@ -343,110 +234,120 @@ describe('generateAndJudge', () => {
         description: generatorCalls.length === 1 ? SAMPLE_DESC_1 : SAMPLE_DESC_2,
       };
     };
-    const judger = makeJudger([
-      {
-        passed: false,
-        lengthOk: true,
-        scores: FAILING_SCORES,
-        deductions: { accuracy: ['河川名の誤認'] },
-        error: null,
-      },
-      { passed: true, lengthOk: true, scores: PASSING_SCORES, deductions: {}, error: null },
-    ]);
+    const judger = makeJudger([FAILING, PASSING]);
 
-    await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher });
+    await generateAndJudge(PARSED, ENV, {
+      generator,
+      judger,
+      wikipediaFetcher: EXTRACT_FETCHER,
+    });
 
-    expect(fetchCalls).toBe(1); // 再生成時は再取得しない
     expect(generatorCalls).toHaveLength(2);
-    // 1 回目に Wikipedia 抜粋
-    expect(generatorCalls[0].messages[0].content[0].text).toContain('[Wikipedia 抜粋]');
-    expect(generatorCalls[0].messages[0].content[0].text).toContain('神奈川県中部');
-    // 2 回目にも同じ Wikipedia 抜粋 + 再生成 feedback
-    expect(generatorCalls[1].messages[0].content[0].text).toContain('[Wikipedia 抜粋]');
-    expect(generatorCalls[1].messages[0].content[0].text).toContain('神奈川県中部');
-    expect(generatorCalls[1].messages[0].content[0].text).toContain('指摘');
+    expect(generatorCalls[0].messages[0].content[0].text).not.toContain('前回');
+    const secondUserContent = generatorCalls[1].messages[0].content[0].text;
+    expect(secondUserContent).toContain('前回');
+    expect(secondUserContent).toContain('小田急線');
+    expect(secondUserContent).toContain('JR 相模線');
+    expect(secondUserContent).toContain('海老名駅');
+    expect(secondUserContent).toMatch(/書き直し|書き直/);
   });
 
-  it('F-1.3b: wikipediaFetcher が例外を投げた場合、null 扱いで継続する', async () => {
+  it('再生成時も同じ Wikipedia 抜粋を再利用（再取得しない）', async () => {
+    let fetchCalls = 0;
+    const wikipediaFetcher = async () => {
+      fetchCalls++;
+      return SAMPLE_EXTRACT;
+    };
+    const generator = makeGenerator([
+      { ok: true, description: SAMPLE_DESC_1 },
+      { ok: true, description: SAMPLE_DESC_2 },
+    ]);
+    const judger = makeJudger([FAILING, PASSING]);
+
+    await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher });
+    expect(fetchCalls).toBe(1);
+  });
+
+  it('wikipediaFetcher が例外を投げた場合、no_wikipedia=true で早期リターン', async () => {
     const wikipediaFetcher = async () => {
       throw new Error('wikipedia API down');
     };
     let genCalls = 0;
-    const generator = async (messagesReq) => {
+    const generator = async () => {
       genCalls++;
-      // 抜粋セクションが入っていないことも検証
-      expect(messagesReq.messages[0].content[0].text).not.toContain('[Wikipedia 抜粋]');
       return { ok: true, description: SAMPLE_DESC_1 };
     };
-    const judger = async () => ({
-      passed: true,
-      lengthOk: true,
-      scores: PASSING_SCORES,
-      deductions: {},
-      error: null,
+    const judger = async () => PASSING;
+
+    const result = await generateAndJudge(PARSED, ENV, {
+      generator,
+      judger,
+      wikipediaFetcher,
     });
 
-    const result = await generateAndJudge(PARSED, ENV, { generator, judger, wikipediaFetcher });
-
     expect(result.ok).toBe(true);
-    expect(genCalls).toBe(1);
+    expect(result.no_wikipedia).toBe(true);
+    expect(genCalls).toBe(0);
   });
 });
 
-describe('formatDeductionsForFeedback', () => {
-  it('null / undefined / 空オブジェクトは空文字', () => {
-    expect(formatDeductionsForFeedback(null)).toBe('');
-    expect(formatDeductionsForFeedback(undefined)).toBe('');
-    expect(formatDeductionsForFeedback({})).toBe('');
+describe('formatOutOfKbTermsForFeedback', () => {
+  it('null / undefined / 空配列は空文字', () => {
+    expect(formatOutOfKbTermsForFeedback(null)).toBe('');
+    expect(formatOutOfKbTermsForFeedback(undefined)).toBe('');
+    expect(formatOutOfKbTermsForFeedback([])).toBe('');
   });
 
-  it('全軸の配列が空でも空文字（注入しない）', () => {
-    expect(
-      formatDeductionsForFeedback({
-        accuracy: [],
-        specificity: [],
-        season_fit: [],
-        density: [],
-      }),
-    ).toBe('');
+  it('1 個でも入っていればヘッダ + 箇条書きで返す', () => {
+    const text = formatOutOfKbTermsForFeedback(['タマネギ']);
+    expect(text).toContain('抜粋に書かれていない');
+    expect(text).toContain('・タマネギ');
   });
 
-  it('1 軸だけ減点ありなら、その軸のラベルと項目が出る', () => {
-    const text = formatDeductionsForFeedback({
-      accuracy: [],
-      specificity: ['桜が美しい（汎用）'],
-      season_fit: [],
-      density: [],
-    });
-    expect(text).toContain('具体性');
-    expect(text).toContain('・桜が美しい（汎用）');
-    expect(text).not.toContain('事実正確性');
-    expect(text).not.toContain('情報密度');
+  it('複数項目を箇条書きで列挙', () => {
+    const text = formatOutOfKbTermsForFeedback(['タマネギ', 'メロン', '小田急線']);
+    expect(text).toContain('・タマネギ');
+    expect(text).toContain('・メロン');
+    expect(text).toContain('・小田急線');
+  });
+});
+
+describe('truncateExtractForFallback', () => {
+  it('空文字 / null / undefined は空文字', () => {
+    expect(truncateExtractForFallback('')).toBe('');
+    expect(truncateExtractForFallback(null)).toBe('');
+    expect(truncateExtractForFallback(undefined)).toBe('');
   });
 
-  it('複数軸 + 複数項目を箇条書きで列挙', () => {
-    const text = formatDeductionsForFeedback({
-      accuracy: ['江戸期の城下町（記載なし）'],
-      specificity: ['桜が美しい（汎用）', '自然豊かな景観（汎用）'],
-      season_fit: [],
-      density: ['淡紅色に染まり（情緒）'],
-    });
-    expect(text).toContain('事実正確性');
-    expect(text).toContain('・江戸期の城下町（記載なし）');
-    expect(text).toContain('具体性');
-    expect(text).toContain('・桜が美しい（汎用）');
-    expect(text).toContain('・自然豊かな景観（汎用）');
-    expect(text).toContain('情報密度');
-    expect(text).toContain('・淡紅色に染まり（情緒）');
-    // 季節整合は減点ゼロなのでラベルが出ない
-    expect(text).not.toContain('季節整合');
+  it('180 字以下ならそのまま返す', () => {
+    const short = 'あ'.repeat(150);
+    expect(truncateExtractForFallback(short)).toBe(short);
   });
 
-  it('未知のキーが混入しても落ちない（生キーをラベルとして使う）', () => {
-    const text = formatDeductionsForFeedback({
-      mystery_axis: ['unknown deduction'],
-    });
-    expect(text).toContain('mystery_axis');
-    expect(text).toContain('・unknown deduction');
+  it('60 字未満の抜粋もそのまま返す（無理に膨らませない）', () => {
+    const veryShort = 'あ'.repeat(30);
+    expect(truncateExtractForFallback(veryShort)).toBe(veryShort);
+  });
+
+  it('180 字超なら句点単位で切って 60-180 字に収める', () => {
+    const text =
+      '海老名市は神奈川県中部に位置する市です。' + // 19 字 + 1 句点 = 20 字
+      '小田急線と JR 相模線が交差する海老名駅があります。' + // 約 28 字
+      '人口は約 14 万人で、県央地域の中心都市の一つです。' + // 約 26 字
+      '商業施設が集積し、ショッピングモールや劇場があります。' + // 約 25 字
+      '近年は再開発が進み、駅周辺の景観が一新されました。' + // 約 26 字
+      'これらにより市の魅力が高まっています。' + // 約 19 字
+      '今後の発展が期待される地域です。' + // 約 16 字
+      '住みやすさのランキングでも上位に入っています。'; // 約 22 字
+    const result = truncateExtractForFallback(text);
+    expect(result.length).toBeLessThanOrEqual(180);
+    expect(result.endsWith('。')).toBe(true);
+  });
+
+  it('1 文目がすでに 180 字超なら強制的に文字数で切り詰める', () => {
+    const oneLong = 'あ'.repeat(300) + '。';
+    const result = truncateExtractForFallback(oneLong);
+    expect(result.length).toBeLessThanOrEqual(181); // 180 + …
+    expect(result.endsWith('…')).toBe(true);
   });
 });

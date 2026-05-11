@@ -90,7 +90,7 @@ export default {
         return jsonResponse({ error: 'bad_request', detail: parsed.error }, 400, allowedOrigin);
       }
 
-      // Plan E (6.4): 生成 → judge → NG なら 1 回再生成 → 集約レスポンス
+      // Plan I: 生成 → Faithfulness Judge → NG なら 1 回再生成 → 集約レスポンス
       const flow = await generateAndJudge(parsed.value, env);
       if (!flow.ok) {
         return jsonResponse(
@@ -102,10 +102,13 @@ export default {
       return jsonResponse(
         {
           description: flow.description,
+          no_wikipedia: flow.no_wikipedia ?? false,
           judge_passed: flow.judge_passed,
-          judge_scores: flow.judge_scores,
-          judge_deductions: flow.judge_deductions,
+          faithfulness_score: flow.faithfulness_score,
+          out_of_kb_terms: flow.out_of_kb_terms,
           regenerated: flow.regenerated,
+          fallback_to_extract: flow.fallback_to_extract,
+          wikipedia_extract_length: flow.wikipedia_extract_length,
           judge_error: flow.judge_error,
           generator_model: flow.generator_model,
           judge_model: flow.judge_model,

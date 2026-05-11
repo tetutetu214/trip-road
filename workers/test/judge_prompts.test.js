@@ -1,229 +1,80 @@
 import { describe, it, expect } from 'vitest';
-import {
-  SOLAR_TERM_META,
-  buildCommonPreamble,
-  buildFactualityPrompt,
-  buildSpecificityPrompt,
-  buildSeasonalConsistencyPrompt,
-  buildInformationDensityPrompt,
-} from '../src/judge_prompts.js';
+import { buildFaithfulnessPrompt } from '../src/judge_prompts.js';
 
 const SAMPLE_INPUT = {
   prefecture: '神奈川県',
-  municipality: '相模原市緑区',
-  solarTerm: '05', // 清明
+  municipality: '海老名市',
   description:
-    '相模原市緑区は、神奈川県北部の山岳地帯に位置します。津久井湖と相模湖を抱える地形で、蛭ヶ岳（神奈川県最高峰）が西部にそびえます。江戸期は甲州街道の宿場町として栄え、養蚕業が盛んでした。',
+    '海老名市は神奈川県中部の県央地域に位置する市です。市内には小田急線と JR 相模線が交差する海老名駅があります。',
+  wikipediaExtract:
+    '海老名市は、神奈川県中部の県央地域に位置する市である。神奈川県の中央部に位置する。',
 };
 
-describe('SOLAR_TERM_META', () => {
-  it('24 節気すべてに name と period が定義されている', () => {
-    const keys = Object.keys(SOLAR_TERM_META);
-    expect(keys).toHaveLength(24);
-    for (let i = 1; i <= 24; i++) {
-      const key = String(i).padStart(2, '0');
-      expect(SOLAR_TERM_META[key]).toBeDefined();
-      expect(typeof SOLAR_TERM_META[key].name).toBe('string');
-      expect(typeof SOLAR_TERM_META[key].period).toBe('string');
-      expect(SOLAR_TERM_META[key].name.length).toBeGreaterThan(0);
-      expect(SOLAR_TERM_META[key].period.length).toBeGreaterThan(0);
-    }
-  });
-
-  it('代表的な節気の name が正しい', () => {
-    expect(SOLAR_TERM_META['01'].name).toBe('立春');
-    expect(SOLAR_TERM_META['05'].name).toBe('清明');
-    expect(SOLAR_TERM_META['10'].name).toBe('夏至');
-    expect(SOLAR_TERM_META['22'].name).toBe('冬至');
-  });
-
-  it('period に「頃」を含む人間可読の文字列', () => {
-    expect(SOLAR_TERM_META['05'].period).toContain('4月');
-    expect(SOLAR_TERM_META['05'].period).toContain('頃');
-    expect(SOLAR_TERM_META['10'].period).toContain('6月');
-  });
-});
-
-describe('buildCommonPreamble', () => {
-  it('4 フィールド（市町村・節気番号・節気名・本文）を埋め込む', () => {
-    const text = buildCommonPreamble(SAMPLE_INPUT);
+describe('buildFaithfulnessPrompt', () => {
+  it('市町村名・要約・Wikipedia 抜粋・採点手順・JSON フォーマット指示を含む', () => {
+    const text = buildFaithfulnessPrompt(SAMPLE_INPUT);
+    expect(text).toContain('海老名市');
     expect(text).toContain('神奈川県');
-    expect(text).toContain('相模原市緑区');
-    expect(text).toContain('05');
-    expect(text).toContain('清明');
-    expect(text).toContain(SAMPLE_INPUT.description);
-  });
-
-  it('校閲者ロール宣言と共通採点基準（5〜1点）を含む', () => {
-    const text = buildCommonPreamble(SAMPLE_INPUT);
-    expect(text).toContain('校閲者');
-    expect(text).toContain('120〜180字');
+    expect(text).toContain('Wikipedia 抜粋');
+    expect(text).toContain('海老名市は、神奈川県中部'); // 抜粋本文
+    expect(text).toContain('海老名駅'); // 要約本文
+    expect(text).toContain('out_of_kb_terms');
+    expect(text).toContain('score');
     expect(text).toContain('JSON');
-    expect(text).toContain('5: 減点根拠なし');
-    expect(text).toContain('1: 全面的に問題');
-    // 「先に減点根拠を引用、点数は最後」の CoT 指示
-    expect(text).toContain('引用');
-    expect(text).toMatch(/最後|最終/);
-  });
-});
-
-describe('buildFactualityPrompt（軸 1）', () => {
-  it('共通プリアンブル + 観点 + Wikipedia 抜粋 + Few-shot 5 パターンを含む（G-1 + 軸違い対策）', () => {
-    const text = buildFactualityPrompt({
-      ...SAMPLE_INPUT,
-      wikipediaExtract: '相模原市緑区は、相模原市を構成する3行政区のうちの一つである。',
-    });
-    expect(text).toContain('相模原市緑区'); // プリアンブル経由
-    expect(text).toContain('Wikipedia');
-    expect(text).toContain('相模原市を構成する3行政区'); // 抜粋本文
-    expect(text).toContain('蛭ヶ岳'); // Few-shot 例 A（5点・整合）
-    expect(text).toContain('多摩川'); // Few-shot 例 B（5点・記載なしだが地理常識として妥当）
-    expect(text).toContain('箱根温泉'); // Few-shot 例 C（5点・Wikipedia と重複だが事実として正しい）
-    expect(text).toContain('春節祭'); // Few-shot 例 D（5点・季節と矛盾するが accuracy では減点しない）
-    expect(text).toContain('武家屋敷'); // Few-shot 例 E（2点・直接矛盾）
-    expect(text).toMatch(/採点|採点してください/);
   });
 
-  it('観点が「直接矛盾のみ重く減点、記載なしは減点しない」に緩和されている（G-1）', () => {
-    const text = buildFactualityPrompt({
-      ...SAMPLE_INPUT,
-      wikipediaExtract: '相模原市緑区は、相模原市を構成する3行政区のうちの一つである。',
-    });
-    expect(text).toContain('直接矛盾');
-    expect(text).toContain('記載がないだけ');
-    // 旧 over-refusal ルール（G-1 で削除）が消えていること
-    expect(text).not.toContain('明記されていない事項は「根拠なし」とみなし減点');
+  it('採点基準 5/4/3/2/1 のそれぞれを含む', () => {
+    const text = buildFaithfulnessPrompt(SAMPLE_INPUT);
+    expect(text).toContain('5:');
+    expect(text).toContain('4:');
+    expect(text).toContain('3:');
+    expect(text).toContain('2:');
+    expect(text).toContain('1:');
+    expect(text).toContain('忠実');
   });
 
-  it('「この軸で評価しない（他軸の責任）」セクションで軸違いを明示分離している', () => {
-    const text = buildFactualityPrompt({
-      ...SAMPLE_INPUT,
-      wikipediaExtract: '相模原市緑区は、相模原市を構成する3行政区のうちの一つである。',
-    });
-    // 軸違いブロックの存在
-    expect(text).toContain('この軸で評価しない');
-    // 各他軸への明示的な振り分け
-    expect(text).toContain('軸 4');
-    expect(text).toContain('軸 2');
-    expect(text).toContain('軸 3');
-    // 「冗長」「簡潔さに欠ける」を accuracy で減点しない明示
-    expect(text).toContain('冗長');
-    expect(text).toContain('簡潔さ');
-    // 「年号が記載されていないため」のような不当減点理由を禁じる文言
-    expect(text).toContain('減点してはならない');
+  it('「評価しないこと」セクションで文体・字数・包括性を除外している', () => {
+    const text = buildFaithfulnessPrompt(SAMPLE_INPUT);
+    expect(text).toContain('評価しないこと');
+    expect(text).toContain('文体');
+    expect(text).toContain('字数');
+    expect(text).toMatch(/包括性|どの部分を選んだ/);
   });
 
-  it('Few-shot 例 B（記載なしだが地理常識として妥当）が 5 点想定で含まれる（G-1）', () => {
-    const text = buildFactualityPrompt({
-      ...SAMPLE_INPUT,
-      wikipediaExtract: '相模原市緑区は、相模原市を構成する3行政区のうちの一つである。',
-    });
-    expect(text).toMatch(/例B[(（]5点想定/);
-    expect(text).toContain('地理常識として整合');
-    expect(text).toContain('減点対象外');
+  it('Few-shot 例 A（5 点想定、完全に忠実）が含まれる', () => {
+    const text = buildFaithfulnessPrompt(SAMPLE_INPUT);
+    expect(text).toMatch(/例 A[(（]5 点想定/);
+    expect(text).toContain('out_of_kb_terms": []');
+    expect(text).toContain('"score": 5');
   });
 
-  it('Few-shot 例 C（Wikipedia と重複だが事実として正しい）が 5 点想定で含まれる', () => {
-    const text = buildFactualityPrompt({
-      ...SAMPLE_INPUT,
-      wikipediaExtract: '相模原市緑区は、相模原市を構成する3行政区のうちの一つである。',
-    });
-    expect(text).toMatch(/例C[(（]5点想定/);
-    expect(text).toContain('Wikipedia の記述と一致');
-    expect(text).toContain('軸 4 の評価');
+  it('Few-shot 例 B（2 点想定、抜粋にない事実）が含まれる', () => {
+    const text = buildFaithfulnessPrompt(SAMPLE_INPUT);
+    expect(text).toMatch(/例 B[(（]2 点想定/);
+    expect(text).toContain('"score": 2');
+    expect(text).toContain('タマネギ');
+    expect(text).toContain('メロン');
   });
 
-  it('Few-shot 例 D（季節と矛盾するが accuracy 軸では減点しない）が 5 点想定で含まれる', () => {
-    const text = buildFactualityPrompt({
-      ...SAMPLE_INPUT,
-      wikipediaExtract: '相模原市緑区は、相模原市を構成する3行政区のうちの一つである。',
-    });
-    expect(text).toMatch(/例D[(（]5点想定/);
-    expect(text).toContain('季節整合（軸 3）');
+  it('「採点してください」で実質的に終わる', () => {
+    const text = buildFaithfulnessPrompt(SAMPLE_INPUT);
+    expect(text.endsWith('採点してください。') || text.endsWith('採点してください')).toBe(true);
   });
 
-  it('wikipediaExtract が null のときは「情報なし」差し替え + 保守的評価指示', () => {
-    const text = buildFactualityPrompt({
-      ...SAMPLE_INPUT,
-      wikipediaExtract: null,
-    });
-    expect(text).toContain('Wikipedia');
-    expect(text).toContain('情報なし');
-    expect(text).toMatch(/明確な誤り|減点しない/);
-    // null のときも Few-shot は残す（評価軸の理解には必要）
-    expect(text).toContain('蛭ヶ岳');
-  });
-});
-
-describe('buildSpecificityPrompt（軸 2）', () => {
-  it('共通プリアンブル + 観点 + Few-shot を含み Wikipedia は使わない', () => {
-    const text = buildSpecificityPrompt(SAMPLE_INPUT);
-    expect(text).toContain('相模原市緑区');
-    expect(text).toContain('固有名詞');
-    expect(text).toContain('汎用'); // 汎用フレーズ
-    expect(text).toContain('津久井湖'); // Few-shot 例 A の固有名詞
-    expect(text).toContain('桜が咲き'); // Few-shot 例 B の汎用フレーズ
-    expect(text).not.toContain('Wikipedia');
-  });
-});
-
-describe('buildSeasonalConsistencyPrompt（軸 3）', () => {
-  it('節気名と period を観点に埋め込み、Few-shot を含む', () => {
-    const text = buildSeasonalConsistencyPrompt(SAMPLE_INPUT);
-    expect(text).toContain('清明');
-    expect(text).toContain('4月'); // period の月
-    expect(text).toContain('二十四節気');
-    expect(text).toContain('雪化粧'); // Few-shot 例 B の矛盾例
-    expect(text).toContain('紅葉'); // Few-shot 例 B
-    expect(text).not.toContain('Wikipedia');
+  it('「校閲者」ロール宣言を冒頭で行う', () => {
+    const text = buildFaithfulnessPrompt(SAMPLE_INPUT);
+    expect(text.startsWith('あなたは厳格な校閲者です')).toBe(true);
   });
 
-  it('別の節気でも period と name が動的に切り替わる', () => {
-    const text = buildSeasonalConsistencyPrompt({
-      ...SAMPLE_INPUT,
-      solarTerm: '22', // 冬至
-    });
-    expect(text).toContain('冬至');
-    expect(text).toContain('12月'); // 冬至の period
-  });
-});
-
-describe('buildInformationDensityPrompt（軸 4）', () => {
-  it('情緒修飾と事実陳述の対比を観点に含み、Few-shot を含む', () => {
-    const text = buildInformationDensityPrompt(SAMPLE_INPUT);
-    expect(text).toContain('情緒');
-    expect(text).toMatch(/事実陳述|カーナビ/);
-    expect(text).toContain('津久井湖'); // Few-shot 例 A の事実情報
-    expect(text).toContain('心地よい春風'); // Few-shot 例 B の情緒フレーズ
-    expect(text).not.toContain('Wikipedia');
-  });
-});
-
-describe('共通動作: 全プロンプトに共通の構造', () => {
-  it('全 4 軸プロンプトが「採点してください」で実質的に終わる', () => {
-    const wikipediaExtract = '相模原市緑区は、相模原市を構成する3行政区のうちの一つである。';
-    const prompts = [
-      buildFactualityPrompt({ ...SAMPLE_INPUT, wikipediaExtract }),
-      buildSpecificityPrompt(SAMPLE_INPUT),
-      buildSeasonalConsistencyPrompt(SAMPLE_INPUT),
-      buildInformationDensityPrompt(SAMPLE_INPUT),
-    ];
-    for (const p of prompts) {
-      expect(p.endsWith('採点してください。') || p.endsWith('採点してください')).toBe(true);
-    }
-  });
-
-  it('全 4 軸プロンプトが共通プリアンブルから始まる', () => {
-    const wikipediaExtract = '相模原市緑区は、相模原市を構成する3行政区のうちの一つである。';
-    const preamble = buildCommonPreamble(SAMPLE_INPUT);
-    const prompts = [
-      buildFactualityPrompt({ ...SAMPLE_INPUT, wikipediaExtract }),
-      buildSpecificityPrompt(SAMPLE_INPUT),
-      buildSeasonalConsistencyPrompt(SAMPLE_INPUT),
-      buildInformationDensityPrompt(SAMPLE_INPUT),
-    ];
-    for (const p of prompts) {
-      expect(p.startsWith(preamble)).toBe(true);
-    }
+  it('Plan I で削除した 4 軸関連の文言が含まれていない', () => {
+    const text = buildFaithfulnessPrompt(SAMPLE_INPUT);
+    expect(text).not.toContain('二十四節気');
+    expect(text).not.toContain('軸 1');
+    expect(text).not.toContain('軸 2');
+    expect(text).not.toContain('軸 3');
+    expect(text).not.toContain('軸 4');
+    expect(text).not.toContain('情緒');
+    expect(text).not.toContain('情報密度');
+    expect(text).not.toContain('具体性');
   });
 });
