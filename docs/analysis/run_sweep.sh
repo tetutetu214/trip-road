@@ -1,19 +1,19 @@
 #!/bin/bash
-# trip-road バッチ評価（sweep）
+# trip-road バッチ評価（sweep）— Plan I 版
 #
-# 使い方: bash docs/analysis/run_sweep.sh [solar_term]
-#   solar_term: 二十四節気の番号文字列（デフォルト '07' = 立夏）
+# 使い方: bash docs/analysis/run_sweep.sh
 #
 # 動作:
 #   - ハードコードした神奈川県内の市町村セットに対して /api/describe を順次 POST
 #   - 各レスポンスを JSONL で 1 ファイルに集約
-#   - 軸別平均 / 合格率 / accuracy 軸の deductions を末尾に表示
+#   - Faithfulness 1 軸の平均 / 合格率 / no_wikipedia 件数 / fallback_to_extract 件数 /
+#     out_of_kb_terms の頻度を末尾に表示
 #
-# 実走観測がてつてつの利用形態（同じ場所への移動が多い）では困難なため、
-# プロンプト・モデル変更の効果測定はこのスクリプトをベースラインに行う。
+# Plan I（2026-05-11）でリクエスト body から solar_term を廃止、
+# レスポンスは新スキーマ（faithfulness_score / out_of_kb_terms / no_wikipedia /
+# fallback_to_extract / wikipedia_extract_length）に対応。
 #
-# コスト: 1 entry あたり Generator 1 + Judge 4 軸（+ 再生成ぶん）。
-# Nova Pro で 10 件回しても数十円程度の想定（厳密試算は未実施）。
+# memory「trip-road は実走観測ではなくバッチ評価」「Judge 改善は curl sweep で測る」と整合。
 
 set -euo pipefail
 
@@ -32,7 +32,6 @@ if [ -z "${APP_PASSWORD:-}" ] || [ -z "${ALLOWED_ORIGIN:-}" ]; then
 fi
 
 WORKER_URL="${WORKER_URL:-https://trip-road-api.tetutetu214.com}"
-SOLAR_TERM="${1:-07}"
 SLEEP_SEC="${SLEEP_SEC:-3}"
 
 # 神奈川県内の地理特性ミックス（都市・観光・山・海・農村を散らす）
@@ -53,43 +52,41 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OUT_DIR="${SCRIPT_DIR}/data"
 mkdir -p "$OUT_DIR"
 DATE_TAG=$(date +%Y%m%d-%H%M%S)
-OUT_FILE="${OUT_DIR}/sweep-st${SOLAR_TERM}-${DATE_TAG}.jsonl"
+OUT_FILE="${OUT_DIR}/sweep-plan-i-${DATE_TAG}.jsonl"
 
-echo "=== trip-road バッチ評価 ==="
+echo "=== trip-road バッチ評価（Plan I） ==="
 echo "Worker URL : $WORKER_URL"
-echo "節気       : $SOLAR_TERM"
 echo "対象       : ${#TARGETS[@]} 市町村"
 echo "出力       : $OUT_FILE"
 echo ""
 
 for muni in "${TARGETS[@]}"; do
   printf "→ %s ... " "$muni"
-  REQ_BODY=$(jq -nc --arg pref "神奈川県" --arg muni "$muni" --arg st "$SOLAR_TERM" \
-    '{prefecture:$pref, municipality:$muni, solar_term:$st}')
+  REQ_BODY=$(jq -nc --arg pref "神奈川県" --arg muni "$muni" \
+    '{prefecture:$pref, municipality:$muni}')
 
-  # --max-time 60: Wikipedia + Generator + Judge 4軸 + 再生成があっても1分で見切る
   RESP=$(curl -sS --max-time 90 -X POST "${WORKER_URL}/api/describe" \
     -H "Content-Type: application/json" \
     -H "X-App-Password: $APP_PASSWORD" \
     -H "Origin: $ALLOWED_ORIGIN" \
     -d "$REQ_BODY" 2>&1) || { echo "失敗（curl エラー）"; sleep "$SLEEP_SEC"; continue; }
 
-  # JSON でなければエラーログとして残す
   if ! echo "$RESP" | jq -e . >/dev/null 2>&1; then
     echo "失敗（JSON 不正）"
-    echo "{\"municipality\":\"$muni\",\"solar_term\":\"$SOLAR_TERM\",\"error\":\"non_json\",\"raw\":$(jq -Rs . <<<"$RESP")}" >> "$OUT_FILE"
+    echo "{\"municipality\":\"$muni\",\"error\":\"non_json\",\"raw\":$(jq -Rs . <<<"$RESP")}" >> "$OUT_FILE"
     sleep "$SLEEP_SEC"
     continue
   fi
 
-  # municipality と solar_term をメタ情報として埋め込んで保存
-  echo "$RESP" | jq -c --arg muni "$muni" --arg st "$SOLAR_TERM" \
-    '. + {municipality: $muni, solar_term: $st}' >> "$OUT_FILE"
+  echo "$RESP" | jq -c --arg muni "$muni" \
+    '. + {municipality: $muni}' >> "$OUT_FILE"
 
   PASS=$(echo "$RESP" | jq -r '.judge_passed // "null"')
-  ACC=$(echo "$RESP" | jq -r '.judge_scores.accuracy // "null"')
+  SCORE=$(echo "$RESP" | jq -r '.faithfulness_score // "null"')
   REGEN=$(echo "$RESP" | jq -r '.regenerated // "null"')
-  printf "passed=%s acc=%s regen=%s\n" "$PASS" "$ACC" "$REGEN"
+  NOWIKI=$(echo "$RESP" | jq -r '.no_wikipedia // false')
+  FALLBACK=$(echo "$RESP" | jq -r '.fallback_to_extract // false')
+  printf "passed=%s score=%s regen=%s no_wiki=%s fallback=%s\n" "$PASS" "$SCORE" "$REGEN" "$NOWIKI" "$FALLBACK"
   sleep "$SLEEP_SEC"
 done
 
@@ -99,25 +96,29 @@ TOTAL=$(wc -l < "$OUT_FILE")
 echo "件数: $TOTAL"
 PASS_N=$(jq -s '[.[] | select(.judge_passed == true)] | length' "$OUT_FILE")
 NG_N=$(jq -s '[.[] | select(.judge_passed == false)] | length' "$OUT_FILE")
-FO_N=$(jq -s '[.[] | select(.judge_passed == null and .description != null)] | length' "$OUT_FILE")
-echo "合格: $PASS_N / NG: $NG_N / fail-open: $FO_N"
+FO_N=$(jq -s '[.[] | select(.judge_passed == null and .no_wikipedia != true)] | length' "$OUT_FILE")
+NOWIKI_N=$(jq -s '[.[] | select(.no_wikipedia == true)] | length' "$OUT_FILE")
+FALLBACK_N=$(jq -s '[.[] | select(.fallback_to_extract == true)] | length' "$OUT_FILE")
+echo "合格: $PASS_N / NG: $NG_N / fail-open: $FO_N / no_wikipedia: $NOWIKI_N / fallback_to_extract: $FALLBACK_N"
 echo ""
 
-echo "軸別平均（小数2桁、null除外）:"
-for axis in accuracy specificity season_fit density; do
-  AVG=$(jq -s --arg a "$axis" '
-    [.[] | select(.judge_scores != null) | .judge_scores[$a] | select(. != null)]
-    | if length>0 then (add/length*100|round/100|tostring) else "-" end
-  ' "$OUT_FILE")
-  printf "  %-13s %s\n" "$axis:" "$AVG"
-done
+echo "Faithfulness score 平均（null 除外、小数2桁）:"
+AVG=$(jq -s '
+  [.[] | .faithfulness_score | select(. != null)]
+  | if length>0 then (add/length*100|round/100|tostring) else "-" end
+' "$OUT_FILE")
+printf "  faithfulness_score: %s\n" "$AVG"
 echo ""
 
-echo "accuracy 軸 deductions（不当減点パターン検出用）:"
-jq -s -r '.[] | select(.judge_deductions.accuracy != null) |
+echo "out_of_kb_terms（市町村別、頻出固有名詞検出用）:"
+jq -s -r '.[] | select(.out_of_kb_terms != null and (.out_of_kb_terms | length > 0)) |
   "[\(.municipality)] " +
-  ( .judge_deductions.accuracy
-    | if length == 0 then "(deductions なし)" else (map("- " + .) | join("\n  ")) end )
+  ( .out_of_kb_terms | map("- " + .) | join("\n  ") )
 ' "$OUT_FILE"
 echo ""
+
+echo "wikipedia_extract_length 分布:"
+jq -s -r '.[] | "  \(.municipality): \(.wikipedia_extract_length // "null")"' "$OUT_FILE"
+echo ""
+
 echo "完了: $OUT_FILE"

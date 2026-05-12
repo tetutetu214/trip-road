@@ -62,12 +62,12 @@ echo ""
 
 echo "--- テスト1: 正常リクエスト（200 + Bedrock Nova Pro 出力期待、約 \$0.001〜0.005 課金） ---"
 # -si で APP_PASSWORD を含む request ヘッダを画面に出さない（-sv は禁止）
-# solar_term は二十四節気の番号文字列（'01'〜'24'、Plan E 以降のスキーマ）
+# Plan I 以降は solar_term 廃止、リクエスト body は prefecture / municipality のみ
 curl -si -X POST "${WORKER_URL}/api/describe" \
   -H "Content-Type: application/json" \
   -H "X-App-Password: $APP_PASSWORD" \
   -H "Origin: $ALLOWED_ORIGIN_PROD" \
-  -d '{"prefecture":"神奈川県","municipality":"相模原市緑区","solar_term":"07"}' \
+  -d '{"prefecture":"神奈川県","municipality":"鎌倉市"}' \
   | head -40
 echo ""
 
