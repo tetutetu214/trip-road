@@ -476,9 +476,10 @@ Plan H 反映直後の 5/9 朝に H-12 観測フェーズに入ったが、て�
 
 ### 残課題（Plan I Phase 2 候補）
 
-- [ ] **政令指定都市の区の Wikipedia 取得失敗**: 横浜市中区・相模原市緑区が `no_wikipedia` になる。`resolveWikipediaTitle` に「{municipality}（{parent_city}）」形式の新 attempt を追加（例: 「中区 (横浜市)」「緑区 (相模原市)」）
-- [ ] **Faithfulness Judge の形態素解析化**: Nova Pro Judge の指示無視リスクをゼロにするため、kuromoji 等の軽量形態素解析器で「抜粋外の固有名詞混入」を決定論的に検出。Workers 上で動く実装を調査
-- [ ] **抜粋転載フォールバック時の体裁改善**: 1 文転載で終わると体裁が悪い（箱根町・秦野市）。`truncateExtractForFallback` を最低字数 120 を意識した複数文連結に
+- [x] **政令指定都市の区の Wikipedia 取得失敗** (Phase 2-1、2026-05-12 完了): `resolveWikipediaTitle` に attempt=2 を追加し「{市}{区}」→「{区} ({市})」変換で no_wikipedia を 2/10 → 0/10 に。詳細は `knowledge.md` 4.25 章
+- [ ] **抜粋本文が薄い問題** (Phase 2-3 候補、Phase 2-1 で顕在化): Wikipedia API の `exintro=true` で intro section のみ取得しているため、政令市の区など intro が短い記事では 32 字程度しか取れない。`exintro` を外す or `exsentences=N` で文数指定する方を検討
+- [ ] **Faithfulness Judge の形態素解析化** (Phase 2-2 候補): Nova Pro Judge の指示無視リスクをゼロにするため、kuromoji 等の軽量形態素解析器で「抜粋外の固有名詞混入」を決定論的に検出。Workers 上で動く実装を調査
+- [ ] **抜粋転載フォールバック時の体裁改善** (Phase 2-3 候補): 1 文転載で終わると体裁が悪い（箱根町・秦野市・横浜市中区・相模原市緑区）。`truncateExtractForFallback` を最低字数 120 を意識した複数文連結に、ただし抜粋本文の厚みと統合検討
 
 ---
 
