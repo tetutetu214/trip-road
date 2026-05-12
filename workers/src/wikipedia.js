@@ -30,6 +30,11 @@ const MAX_TITLE_ATTEMPTS = 3;
 /**
  * Wikipedia API URL を組み立てる。
  *
+ * Plan I Phase 2-3（2026-05-12）で exintro=true を撤廃し、intro セクションだけでなく
+ * 本文全体（plaintext）を取得するように変更。intro が短い記事（政令市の区など）で
+ * フォールバック転載になっていた問題を解消する。
+ * MAX_EXTRACT_LENGTH（1500 字）の末尾切り詰めは cleanExtract が担当。
+ *
  * @param {string} title - 記事タイトル（日本語可、URL エンコード前）
  * @returns {string}
  */
@@ -37,7 +42,6 @@ export function buildWikipediaUrl(title) {
   const params = new URLSearchParams({
     action: 'query',
     prop: 'extracts',
-    exintro: 'true',
     explaintext: 'true',
     redirects: 'true',
     titles: title,

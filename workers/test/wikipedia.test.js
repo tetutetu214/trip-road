@@ -42,11 +42,12 @@ describe('buildWikipediaUrl', () => {
     expect(paramsOf(url).get('titles')).toBe('相模原市');
   });
 
-  it('Plan E 仕様の固定パラメータをすべて含む', () => {
+  it('Plan I Phase 2-3 仕様の固定パラメータをすべて含む（exintro は撤廃済）', () => {
     const params = paramsOf(buildWikipediaUrl('新宿区'));
     expect(params.get('action')).toBe('query');
     expect(params.get('prop')).toBe('extracts');
-    expect(params.get('exintro')).toBe('true');
+    // Phase 2-3 で exintro=true を撤廃。本文全体を取得して MAX_EXTRACT_LENGTH で切り詰める設計
+    expect(params.get('exintro')).toBeNull();
     expect(params.get('explaintext')).toBe('true');
     expect(params.get('redirects')).toBe('true');
     expect(params.get('format')).toBe('json');
