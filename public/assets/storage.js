@@ -4,14 +4,13 @@
  * キー "trip-road-state" に単一 JSON オブジェクトを保存する形式:
  *   {
  *     password: string | null,
- *     visited: { [code]: { name, prefecture, firstVisit, descriptions: { [solarTerm]: text } } },
+ *     visited: { [code]: { name, prefecture, firstVisit, description: string } },
  *     track: [{ lat, lon, ts }],
  *     currentMuniCd: string | null
  *   }
  *
- * descriptions のキーは二十四節気の番号文字列（'01'〜'24'）。
- * 旧バージョンでは spring/summer/autumn/winter の固定4キーだったが、24節気採用に伴い
- * 可変キー構造に変更した。旧キャッシュは読み出されず自然消滅する。
+ * Plan I（2026-05-11）で description は市町村ごとに 1 つの要約に簡素化。
+ * 旧バージョンの descriptions（節気別マップ）は読み出されず自然消滅する。
  */
 
 const STORAGE_KEY = 'trip-road-state';
@@ -58,7 +57,7 @@ export function markVisited(code, name, prefecture) {
       name,
       prefecture,
       firstVisit: new Date().toISOString(),
-      descriptions: {},
+      description: null,
     };
   }
   state.currentMuniCd = code;
@@ -68,18 +67,16 @@ export function getVisitedCount() {
   return Object.keys(loadState().visited).length;
 }
 
-// === Description cache ===
-// キーは二十四節気の番号文字列（'01'〜'24'）。
-export function getCachedDescription(code, solarTerm) {
+// === Description cache（Plan I: 市町村ごと単一の要約） ===
+export function getCachedDescription(code) {
   const v = loadState().visited[code];
   if (!v) return null;
-  return v.descriptions?.[solarTerm] ?? null;
+  return v.description ?? null;
 }
-export function setCachedDescription(code, solarTerm, text) {
+export function setCachedDescription(code, text) {
   const state = loadState();
   if (!state.visited[code]) return; // markVisited が先行する前提
-  state.visited[code].descriptions ??= {};
-  state.visited[code].descriptions[solarTerm] = text;
+  state.visited[code].description = text;
   saveState(state);
 }
 

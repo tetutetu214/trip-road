@@ -1,86 +1,103 @@
 /**
- * /api/describe のメインフロー（Plan E / Phase 6.4b、F-1.3b で生成側 RAG 拡張）
+ * /api/describe のメインフロー（Plan I / Wikipedia 要約特化）
  *
- * 生成 → judge → NG なら 1 回だけ再生成 → 再 judge → 打ち切り
- * のループを担う。`workers/src/index.js` のハンドラから呼び出される。
+ * 振る舞い:
+ *   1. Wikipedia 抜粋を取得
+ *   2. 抜粋なし → Generator を呼ばずに「記事なし」を返す（フロントで表示メッセージを出す）
+ *   3. 抜粋あり → Generator で要約 → Faithfulness Judge
+ *   4. judge passed=true → 返す
+ *   5. judge passed=false → 1 回だけ再生成 → 再 judge
+ *   6. 再 judge も passed=false → Wikipedia 抜粋を切り詰めてフォールバック
+ *   7. judge passed=null（fail-open） → 1 回目の生成文をそのまま返す
  *
- * F-1.3b で Wikipedia 抜粋をフロー先頭で取得し、Generator にも渡すよう拡張。
- * Judge は内部で同じ抜粋を再取得するが、Workers Cache API（30 日 TTL）が
- * ヒットするため実質 1 fetch で済む。
+ * Plan I の核心:
+ *   - LLM の内部知識で創作させない（in-context にない情報は出さない）
+ *   - 抜粋なしの市町村に対して LLM で創作させるのは禁止
+ *   - judge も passed しない生成は機械的に抜粋転載へフォールバック（ハルシネーション防止）
  *
- * 設計判断・障害ハンドリング方針は docs/plan.md 第 10 章 / docs/spec.md 10.4-10.5
- * を参照。実装上の判断は docs/knowledge.md 4.11 / 4.18 章を参照。
+ * 設計判断は docs/plans/2026-05-11-plan-i-wikipedia-summary-pivot.md 参照。
  */
 
 import { buildGeneratorRequest, callNovaGenerator, NOVA_MODEL_ID } from './nova.js';
 import { judgeAll, JUDGE_MODEL } from './judge.js';
 import { getCachedWikipediaExtract } from './wikipedia.js';
 
-// Plan H: テレメトリで Plan H 前後の比較ができるよう、生成・評価に使ったモデル ID を
-// レスポンス（→ フロント telemetry → S3 entry）に乗せる。
-// Generator と Judge の両方を Nova Pro に統一しているが、将来的に別モデルへ
-// 切替する余地を残すため別フィールドにする。
 const GENERATOR_MODEL = NOVA_MODEL_ID;
 
-// 軸キー → 日本語ラベル（feedback テキスト用）
-const AXIS_LABELS = {
-  accuracy: '事実正確性',
-  specificity: '具体性',
-  season_fit: '季節整合',
-  density: '情報密度',
-};
+// フォールバック転載時の字数上限。SYSTEM_PROMPT の上限 180 と揃える。
+const FALLBACK_MAX_LENGTH = 180;
+// 60 字を下回る抜粋はそのまま返す（短い記事をさらに切り詰めない）
+const FALLBACK_MIN_LENGTH = 60;
 
 /**
- * judge の deductions オブジェクトを Haiku 用のフィードバックテキストに整形（純粋関数）。
+ * Faithfulness Judge の out_of_kb_terms を再生成プロンプト用に整形（純粋関数）。
  *
- * 入力: { accuracy: [...], specificity: ['桜が美しい（汎用）', ...], season_fit: [], density: [...] }
- * 出力（例）:
- *   - 具体性:
- *     ・桜が美しい（汎用）
- *   - 情報密度:
- *     ・淡紅色に染まり（情緒）
+ * 抜粋にない固有名詞のリストを箇条書き化し、Generator に「これらの単語は抜粋外なので
+ * 使うな」というフィードバックを与える。
  *
- * 全軸の deductions が空 / 入力が null のときは空文字を返す（呼び出し側 anthropic.js が無視）。
+ * 空配列・null は空文字を返す（呼び出し側 nova.js が無視）。
  *
- * @param {object|null|undefined} deductions
+ * @param {string[]|null|undefined} terms
  * @returns {string}
  */
-export function formatDeductionsForFeedback(deductions) {
-  if (!deductions || typeof deductions !== 'object') return '';
-  const lines = [];
-  for (const [axis, items] of Object.entries(deductions)) {
-    if (Array.isArray(items) && items.length > 0) {
-      lines.push(`- ${AXIS_LABELS[axis] ?? axis}:`);
-      items.forEach((d) => lines.push(`  ・${d}`));
-    }
-  }
+export function formatOutOfKbTermsForFeedback(terms) {
+  if (!Array.isArray(terms) || terms.length === 0) return '';
+  const lines = ['抜粋に書かれていない固有名詞・事実（使ってはならない）:'];
+  terms.forEach((t) => lines.push(`  ・${t}`));
   return lines.join('\n');
 }
 
 /**
- * 生成 + Judge + 1 回までの再生成 を実行し、レスポンス用の集約結果を返す。
+ * Wikipedia 抜粋を 60〜180 字に収めて返す（純粋関数、フォールバック転載用）。
  *
- * 振る舞いの分岐:
- *   - 1 回目生成失敗 → ok=false（呼び出し側が 502 を返す）
- *   - 1 回目 judge passed=true → そのまま返す（regenerated=false）
- *   - 1 回目 judge passed=null（fail-open）→ 再生成しない、生成出力を返す
- *   - 1 回目 judge passed=false → 1 回だけ再生成
- *     - 再生成失敗 → 1 回目を返す（regenerated=false、judge_passed は 1 回目の値）
- *     - 再生成成功 → 2 回目の判定結果で返す（regenerated=true）
+ * - 抜粋が FALLBACK_MIN_LENGTH 未満なら、そのまま返す
+ * - FALLBACK_MAX_LENGTH 以下ならそのまま返す
+ * - 超える場合は最初の句点までで切る、それでも超えるなら FALLBACK_MAX_LENGTH で切り詰めて … を付ける
  *
- * F-1.3b: フロー先頭で Wikipedia 抜粋を取得し、Generator にも渡す（生成側 RAG）。
- * fetcher が null や例外を返した場合は抜粋なしで継続（Generator 側で抜粋セクションを省略）。
+ * @param {string} extract
+ * @returns {string}
+ */
+export function truncateExtractForFallback(extract) {
+  if (typeof extract !== 'string' || extract.length === 0) return '';
+  if (extract.length <= FALLBACK_MAX_LENGTH) return extract;
+
+  // 句点単位で取り、上限内に収まるだけ繋ぐ
+  const sentences = extract.split('。');
+  let acc = '';
+  for (const s of sentences) {
+    if (s.length === 0) continue;
+    const next = acc + s + '。';
+    if (next.length > FALLBACK_MAX_LENGTH) break;
+    acc = next;
+  }
+  if (acc.length >= FALLBACK_MIN_LENGTH) return acc;
+
+  // 1 文目で既に上限を超えるケース → 文字数で切る
+  return extract.slice(0, FALLBACK_MAX_LENGTH) + '…';
+}
+
+/**
+ * 生成 + Faithfulness Judge + 1 回までの再生成 + 抜粋転載フォールバック。
  *
- * @param {object} parsed - parseDescribeRequest の value（{prefecture, municipality, solar_term}）
+ * 振る舞い分岐:
+ *   - Wikipedia 抜粋なし → {ok: true, no_wikipedia: true}
+ *   - 1 回目生成失敗 → {ok: false}
+ *   - judge passed=true → そのまま返す（regenerated=false, fallback_to_extract=false）
+ *   - judge passed=null（fail-open） → 1 回目生成文を返す（judge_error あり）
+ *   - judge passed=false → 1 回だけ再生成
+ *     - 再生成エラー → 1 回目を返す
+ *     - 再生成成功 → 再 judge → passed=true なら返す
+ *     - 再 judge も passed=false → Wikipedia 抜粋転載へフォールバック
+ *
+ * @param {object} parsed - parseDescribeRequest の value（{prefecture, municipality}）
  * @param {object} env - Workers env
  * @param {object} [deps] - 依存注入
- * @param {Function} [deps.generator=callAnthropic]
- * @param {Function} [deps.judger=judgeAll]
- * @param {typeof fetch} [deps.fetchFn=fetch]
- * @param {Function} [deps.wikipediaFetcher=getCachedWikipediaExtract]
  * @returns {Promise<
- *   | {ok: true, description: string, judge_passed: boolean|null,
- *      judge_scores: object|null, regenerated: boolean, judge_error: string|null}
+ *   | {ok: true, description: string, no_wikipedia?: boolean,
+ *      judge_passed: boolean|null, faithfulness_score: number|null,
+ *      out_of_kb_terms: string[], regenerated: boolean, fallback_to_extract: boolean,
+ *      wikipedia_extract_length: number, judge_error: string|null,
+ *      generator_model: string, judge_model: string}
  *   | {ok: false, status: number, detail: string}
  * >}
  */
@@ -90,9 +107,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
   const fetchFn = deps.fetchFn ?? fetch;
   const wikipediaFetcher = deps.wikipediaFetcher ?? getCachedWikipediaExtract;
 
-  // F-1.3b: 先に Wikipedia 抜粋を取得して Generator にも渡す。
-  // 取得失敗（null や例外）の場合は抜粋なしで継続。Generator 側で
-  // 抜粋セクション自体を省略する設計（薄い市町村でハルシネーション増を防ぐ）。
+  // 1. Wikipedia 抜粋を取得
   let wikipediaExtract = null;
   try {
     wikipediaExtract = await wikipediaFetcher({
@@ -105,59 +120,76 @@ export async function generateAndJudge(parsed, env, deps = {}) {
     wikipediaExtract = null;
   }
 
-  const messagesReq = buildGeneratorRequest({ ...parsed, wikipediaExtract });
-
-  // 1 回目生成
-  const gen1 = await generator(messagesReq, env);
-  if (!gen1.ok) {
-    return { ok: false, status: gen1.status, detail: gen1.detail };
-  }
-
-  // 1 回目 judge
-  const judge1 = await judger({
-    description: gen1.description,
-    prefecture: parsed.prefecture,
-    municipality: parsed.municipality,
-    solarTerm: parsed.solar_term,
-    env,
-    fetchFn,
-  });
-
-  // passed=true: そのまま返す
-  if (judge1.passed === true) {
+  // 2. 抜粋なし → Generator を呼ばずに早期リターン（Plan I のコア原則）
+  if (typeof wikipediaExtract !== 'string' || wikipediaExtract.length === 0) {
     return {
       ok: true,
-      description: gen1.description,
-      judge_passed: true,
-      judge_scores: judge1.scores,
-      judge_deductions: judge1.deductions,
+      description: '',
+      no_wikipedia: true,
+      judge_passed: null,
+      faithfulness_score: null,
+      out_of_kb_terms: [],
       regenerated: false,
+      fallback_to_extract: false,
+      wikipedia_extract_length: 0,
       judge_error: null,
       generator_model: GENERATOR_MODEL,
       judge_model: JUDGE_MODEL,
     };
   }
 
-  // passed=null: fail-open（再生成しない）
+  // 3. 1 回目生成
+  const messagesReq = buildGeneratorRequest({ ...parsed, wikipediaExtract });
+  const gen1 = await generator(messagesReq, env);
+  if (!gen1.ok) {
+    return { ok: false, status: gen1.status, detail: gen1.detail };
+  }
+
+  // 4. 1 回目 Judge
+  const judge1 = await judger({
+    description: gen1.description,
+    prefecture: parsed.prefecture,
+    municipality: parsed.municipality,
+    wikipediaExtract,
+    env,
+  });
+
+  // 4a. passed=true: そのまま返す
+  if (judge1.passed === true) {
+    return {
+      ok: true,
+      description: gen1.description,
+      judge_passed: true,
+      faithfulness_score: judge1.score,
+      out_of_kb_terms: judge1.out_of_kb_terms,
+      regenerated: false,
+      fallback_to_extract: false,
+      wikipedia_extract_length: wikipediaExtract.length,
+      judge_error: null,
+      generator_model: GENERATOR_MODEL,
+      judge_model: JUDGE_MODEL,
+    };
+  }
+
+  // 4b. passed=null: fail-open（再生成しない、1 回目をそのまま返す）
   if (judge1.passed === null) {
     return {
       ok: true,
       description: gen1.description,
       judge_passed: null,
-      judge_scores: null,
-      judge_deductions: judge1.deductions ?? {},
+      faithfulness_score: judge1.score,
+      out_of_kb_terms: judge1.out_of_kb_terms ?? [],
       regenerated: false,
+      fallback_to_extract: false,
+      wikipedia_extract_length: wikipediaExtract.length,
       judge_error: judge1.error,
       generator_model: GENERATOR_MODEL,
       judge_model: JUDGE_MODEL,
     };
   }
 
-  // passed=false: 1 回だけ再生成。
-  // Plan E (6.4d): judge1 の deductions を整形して generator に渡し、
-  // 「同じ失敗を繰り返さない」よう Haiku に文脈を伝える。
-  // F-1.3b: Wikipedia 抜粋は 1 回目と同じものを再利用（同じ市町村なので変わらない）。
-  const feedback = formatDeductionsForFeedback(judge1.deductions);
+  // 5. passed=false: 1 回だけ再生成（judge1 の out_of_kb_terms を Generator に渡す）
+  const feedback = formatOutOfKbTermsForFeedback(judge1.out_of_kb_terms);
   const messagesReq2 = buildGeneratorRequest({
     ...parsed,
     wikipediaExtract,
@@ -165,36 +197,58 @@ export async function generateAndJudge(parsed, env, deps = {}) {
   });
   const gen2 = await generator(messagesReq2, env);
   if (!gen2.ok) {
-    // 再生成エラー → 1 回目を返す（採用試行は 1 回のままなので regenerated=false）
+    // 再生成エラー → 1 回目を返す
     return {
       ok: true,
       description: gen1.description,
       judge_passed: false,
-      judge_scores: judge1.scores,
-      judge_deductions: judge1.deductions,
+      faithfulness_score: judge1.score,
+      out_of_kb_terms: judge1.out_of_kb_terms,
       regenerated: false,
+      fallback_to_extract: false,
+      wikipedia_extract_length: wikipediaExtract.length,
       judge_error: null,
       generator_model: GENERATOR_MODEL,
       judge_model: JUDGE_MODEL,
     };
   }
 
+  // 6. 再 Judge
   const judge2 = await judger({
     description: gen2.description,
     prefecture: parsed.prefecture,
     municipality: parsed.municipality,
-    solarTerm: parsed.solar_term,
+    wikipediaExtract,
     env,
-    fetchFn,
   });
 
+  // 7. 再 judge passed=true: 2 回目を返す
+  if (judge2.passed === true) {
+    return {
+      ok: true,
+      description: gen2.description,
+      judge_passed: true,
+      faithfulness_score: judge2.score,
+      out_of_kb_terms: judge2.out_of_kb_terms,
+      regenerated: true,
+      fallback_to_extract: false,
+      wikipedia_extract_length: wikipediaExtract.length,
+      judge_error: null,
+      generator_model: GENERATOR_MODEL,
+      judge_model: JUDGE_MODEL,
+    };
+  }
+
+  // 8. 再 judge も passed=false / null: Wikipedia 抜粋転載へフォールバック
   return {
     ok: true,
-    description: gen2.description,
+    description: truncateExtractForFallback(wikipediaExtract),
     judge_passed: judge2.passed,
-    judge_scores: judge2.scores,
-    judge_deductions: judge2.deductions,
+    faithfulness_score: judge2.score,
+    out_of_kb_terms: judge2.out_of_kb_terms ?? [],
     regenerated: true,
+    fallback_to_extract: true,
+    wikipedia_extract_length: wikipediaExtract.length,
     judge_error: judge2.error,
     generator_model: GENERATOR_MODEL,
     judge_model: JUDGE_MODEL,

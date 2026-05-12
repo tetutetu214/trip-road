@@ -66,6 +66,19 @@ export function setDescriptionFailed() {
 }
 
 /**
+ * Plan I: Wikipedia 記事が見つからなかった市町村の表示。
+ * Generator を呼ばずに、フロント側で正直に「記事なし」を表示する。
+ */
+export function setDescriptionNoWikipedia() {
+  $('description-skeleton').classList.add('hidden');
+  const txt = $('description-loading-text');
+  if (txt) txt.classList.add('hidden');
+  const body = $('description');
+  body.classList.add('muted');
+  body.textContent = 'この市町村の Wikipedia 記事が見つかりませんでした';
+}
+
+/**
  * Plan E (6.5): ローディング中の文言を経過時間に応じて切り替える。
  *
  * @param {'generating'|'judging'|'regenerating'} phase
@@ -139,12 +152,14 @@ export function setDebugInfo(judgeData, isDebugOn) {
 }
 
 /**
- * Judge データ → デバッグ表示用の複数行テキスト（純粋関数、テスト用）。
+ * Judge データ → デバッグ表示用の複数行テキスト（Plan I、純粋関数、テスト用）。
  *
- * 入力 judgeData の形:
+ * 入力 judgeData の形（Plan I 新スキーマ）:
  *   - キャッシュヒット: { cached: true }
- *   - 新規生成 + judge fail-open: { judge_passed: null, judge_error: string|null, ... }
- *   - 新規生成 + judge 成功: { judge_passed: bool, judge_scores: {...}, judge_deductions: {...}, regenerated: bool, judge_error: null }
+ *   - Wikipedia 抜粋なし: { no_wikipedia: true }
+ *   - fail-open: { judge_passed: null, judge_error: string|null }
+ *   - 通常: { judge_passed: bool, faithfulness_score: number, out_of_kb_terms: string[],
+ *            regenerated: bool, fallback_to_extract: bool, judge_error: null }
  *
  * @param {object|null} data
  * @returns {string}
@@ -152,25 +167,19 @@ export function setDebugInfo(judgeData, isDebugOn) {
 export function formatDebugInfo(data) {
   if (!data) return '';
   if (data.cached) return '[DEBUG] (cached, no judge info)';
+  if (data.no_wikipedia) return '[DEBUG] no_wikipedia (Generator was not called)';
   if (data.judge_passed === null) {
     return `[DEBUG] judge unavailable (fail-open)\nerror: ${data.judge_error ?? '-'}`;
   }
-  const s = data.judge_scores ?? {};
+  const score = data.faithfulness_score ?? '-';
   const lines = [
-    `[DEBUG] judge_passed: ${data.judge_passed} (regen: ${data.regenerated ?? false})`,
-    `accuracy: ${s.accuracy ?? '-'}  specificity: ${s.specificity ?? '-'}  season_fit: ${s.season_fit ?? '-'}  density: ${s.density ?? '-'}`,
+    `[DEBUG] judge_passed: ${data.judge_passed} (regen: ${data.regenerated ?? false}, fallback: ${data.fallback_to_extract ?? false})`,
+    `faithfulness_score: ${score}`,
   ];
-  const allDeductions = [];
-  if (data.judge_deductions) {
-    for (const [axis, items] of Object.entries(data.judge_deductions)) {
-      if (Array.isArray(items) && items.length > 0) {
-        items.forEach((d) => allDeductions.push(`  ${axis}: ${d}`));
-      }
-    }
-  }
-  if (allDeductions.length > 0) {
-    lines.push('deductions:');
-    lines.push(...allDeductions);
+  const terms = Array.isArray(data.out_of_kb_terms) ? data.out_of_kb_terms : [];
+  if (terms.length > 0) {
+    lines.push('out_of_kb_terms:');
+    terms.forEach((t) => lines.push(`  ・${t}`));
   }
   return lines.join('\n');
 }

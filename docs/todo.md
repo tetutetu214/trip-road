@@ -1,6 +1,6 @@
 # trip-road タスク一覧
 
-**最終更新**: 2026-05-09（Plan G-1.5「Judge 軸違い不当減点修正」を当日中にバッチ評価で実装・本番反映、PR #42。合格率 22% → 80%、accuracy 平均 3.38 → 4.88 に改善。実走観測モデルからバッチ curl 評価モデルに H-12 を転換）
+**最終更新**: 2026-05-12（Plan I「Wikipedia 要約特化」を 1 日で実装・本番反映。タスク自体を「未知の創作」から「既知の圧縮」へ転換、二十四節気と Judge 4 軸を廃止、Faithfulness 1 軸へ簡素化、`out_of_kb_terms`（抜粋外固有名詞混入）が 10 件中 0 件に。Plan I 詳細は `docs/plans/2026-05-11-plan-i-wikipedia-summary-pivot.md`、知見は `knowledge.md` 4.24 章）
 
 ---
 
@@ -450,12 +450,35 @@ Plan H 反映直後の 5/9 朝に H-12 観測フェーズに入ったが、て�
 - [x] **G-1.5-7** PR #42 作成
 - [ ] **G-1.5-8** PR #42 main マージ（てつてつ判断）
 
-### 残課題（Plan G-1.5 の対象外、別 Issue 候補）
+### 残課題（Plan G-1.5 の対象外、Plan I で吸収済 / Plan I Phase 2 候補）
 
-- [ ] **Generator 出力長 NG**: スイープ 10 件中 2 件（鎌倉市 110 字 / 相模原市緑区 113 字）が文字数下限 120 字を割って機械判定で NG。Generator プロンプトの「120〜180 字」指示の強化、または下限緩和
-- [ ] **specificity / density が低め**（2.75 / 2.88）: 「初夏の気配」「新緑が鮮やか」など汎用フレーズが残る。Generator 側強化（Wikipedia 抜粋活用 / 固有名詞要求）または specificity / density 軸の Few-shot 強化
-- [ ] **真鶴町の保守的判定**: 「真鶴半島とその周辺からなる」を Wikipedia「町域の半分は三方を海に囲まれる」と直接矛盾と判定。観測続けて頻発するなら例 F の追加検討
-- [ ] **Judge meta-eval セット (G-5)**: プロンプト変更時の暴走検出用の手動ラベル付き 20–30 件を作成、`run_sweep.sh` と並ぶ検証手段として整備
+- [x] **Generator 出力長 NG**: Plan I で字数下限を 120 → 60 に緩和して解消
+- [x] **specificity / density が低め**: Plan I で軸自体を廃止。Wikipedia 抜粋からの要約に絞ったため文体ばらつきが減った
+- [x] **真鶴町の保守的判定**: Plan I で軸 1（accuracy）自体を廃止、Faithfulness 1 軸に簡素化したため解消
+- [ ] **Judge meta-eval セット (G-5)**: 形態素解析ベースの決定論的検査への置換 (Plan I Phase 2) と並走で検討
+
+---
+
+## Plan I: Wikipedia 要約特化（完了、2026-05-12）
+
+- [x] Plan I 起草（`docs/plans/2026-05-11-plan-i-wikipedia-summary-pivot.md`）
+- [x] `feature/plan-i-wikipedia-summary-pivot` ブランチ作成
+- [x] Workers バックエンド全面リファクタ（`nova.js` / `judge_prompts.js` / `judge.js` / `describe_flow.js` / `index.js`）— commit `4eb75dd`、テスト 113 件パス
+- [x] 節気ロジック削除（`solar_term_meta.js` 削除、配線除去）
+- [x] テレメトリスキーマ移行（旧 `critic_*` → 新 `faithfulness_score` / `out_of_kb_terms` / `fallback_to_extract` / `no_wikipedia` / `wikipedia_extract_length`）
+- [x] フロント全面移行（`season.js` / `cache.js` 削除、`storage.js` / `telemetry.js` / `ui.js` / `app.js` / `api.js` 更新）— commit `1c0b5be`、テスト 44 件パス
+- [x] 過去テレメトリ 37 件を `s3://trip-road-telemetry-tetutetu214/legacy/` に退避
+- [x] Workers 本番デプロイ（`workers/deploy_production.sh`）
+- [x] Pages 本番デプロイ（`deploy_frontend.sh`）
+- [x] 神奈川 10 市町村でバッチ評価（`docs/analysis/run_sweep.sh` を Plan I 用に書き直し）
+   - 合格 6 件 / 抜粋転載フォールバック 2 件 / `no_wikipedia` 2 件 / `out_of_kb_terms` 検出 0 件
+- [x] `docs/knowledge.md` 4.24 章追加、`docs/plans/` / `docs/todo.md` 反映
+
+### 残課題（Plan I Phase 2 候補）
+
+- [ ] **政令指定都市の区の Wikipedia 取得失敗**: 横浜市中区・相模原市緑区が `no_wikipedia` になる。`resolveWikipediaTitle` に「{municipality}（{parent_city}）」形式の新 attempt を追加（例: 「中区 (横浜市)」「緑区 (相模原市)」）
+- [ ] **Faithfulness Judge の形態素解析化**: Nova Pro Judge の指示無視リスクをゼロにするため、kuromoji 等の軽量形態素解析器で「抜粋外の固有名詞混入」を決定論的に検出。Workers 上で動く実装を調査
+- [ ] **抜粋転載フォールバック時の体裁改善**: 1 文転載で終わると体裁が悪い（箱根町・秦野市）。`truncateExtractForFallback` を最低字数 120 を意識した複数文連結に
 
 ---
 

@@ -1,28 +1,25 @@
 /**
- * Amazon Bedrock Nova Pro クライアント（Plan H / Phase 8）
+ * Amazon Bedrock Nova Pro クライアント（Plan I / Wikipedia 要約特化）
  *
  * Cloudflare Workers から Bedrock Runtime Converse API を SigV4 署名つきで呼び、
- * Generator（土地のたより生成）と Judge（4 軸評価）の両方で共用する。
+ * Generator（Wikipedia 抜粋の要約）と Judge（Faithfulness 1 軸）の両方で共用する。
  *
  * モデル指定は cross-region inference profile `us.amazon.nova-pro-v1:0` を使う。
  * Bedrock 公式ベストプラクティスに従い、us-east-1 / us-west-2 / us-east-2 の
- * 3 リージョンに自動分散させる。Workers Secrets の AWS_ACCESS_KEY_ID /
- * AWS_SECRET_ACCESS_KEY を流用、IAM ユーザーは trip-road-telemetry-writer。
+ * 3 リージョンに自動分散させる。
  *
- * 設計判断は docs/plan.md 第 12 章、`maxTokens` を必ず明示する理由は
- * docs/knowledge.md 4.22.2 章を参照。
+ * Plan I（2026-05-11）でタスクを「未知の創作」から「既知の圧縮（要約）」へ転換。
+ * 二十四節気は廃止、Wikipedia 抜粋を唯一の情報源とする。
  *
  * 公開関数:
- *   - solarTermToJa: 二十四節気の番号文字列 → 日本語名（純粋関数）
  *   - parseDescribeRequest: 受信 JSON body のバリデーション（純粋関数）
  *   - buildGeneratorRequest: Generator 用 Converse API リクエスト body（純粋関数）
  *   - parseConverseResponse: Converse レスポンスから生成テキスト抽出（純粋関数）
  *   - callConverse: Bedrock Runtime に Converse を投げる低レベル関数（副作用）
- *   - callNovaGenerator: Generator 用ラッパー（既存 callAnthropic 互換 API）
+ *   - callNovaGenerator: Generator 用ラッパー
  */
 
 import { AwsClient } from 'aws4fetch';
-import { SOLAR_TERM_META } from './solar_term_meta.js';
 
 // ---- 定数 ----
 
@@ -36,109 +33,88 @@ export const GENERATOR_MAX_TOKENS = 400;
 // 生成のばらつき。0.7 は描写の多様性とハルシネーション抑制のバランス。
 export const DEFAULT_TEMPERATURE = 0.7;
 
-const SYSTEM_PROMPT = `あなたは日本の土地情報の解説者です。指定された都道府県・市区町村・二十四節気から、カーナビの土地情報のように淡々とした、3〜4文の解説を書いてください。
+const SYSTEM_PROMPT = `あなたは日本の市町村情報の要約者です。提供された Wikipedia 抜粋を素材として、カーナビの土地情報のように淡々とした、3〜4文の要約を書いてください。
 
-# 文体（最重要）
+# 最重要ルール（守らないと致命的）
+- Wikipedia 抜粋に書かれている事実だけを使う
+- 抜粋にない地名・人物・年号・特産品・施設名・歴史事実を出してはならない
+- 「自分の知識で補う」「もしかしたら〜だろう」は禁止
+- 抜粋が短く 120 字に満たない場合は、無理に膨らませず短いまま出力してよい
+
+# 文体
 - 「です・ます調」で、淡々と事実を並べる文体
 - 季節の挨拶や情緒的・抒情的な表現は使わない
 - 禁止する表現の例：「〜を迎えた」「〜に包まれて」「清々しい」「心地よい」「息吹を堪能」「〜のたたずまい」「旅情」「身を委ねる」「魅力」「楽しめる」「おすすめ」「いざ」など
-- 期待する文体の例：「〇〇市は××に位置します」「△△のころに□□が旬を迎えます」「江戸期には◇◇として栄えました」のような事実陳述
+- 期待する文体の例：「〇〇市は××に位置します」「△△地区には□□があります」「江戸期には◇◇として栄えました」のような事実陳述
 
-# 出力形式（厳守）
+# 出力形式
 - プレーンテキストのみ。マークダウン（# 見出し、**強調**、- 箇条書き、空行 など）を一切使わない
 - 冒頭にタイトル・見出し・市町村名のラベルを置かない、いきなり本文から始める
-- 字数は120〜180字を厳守する。180字を超えそうなら要素を削って収める
+- 字数は 60〜180 字を目安。抜粋が薄い場合は 60〜119 字でもよい。180 字を超えそうなら要素を削って収める
 
-# 内容のルール
-- 二十四節気の季節感（その節気の旬の食材・農作物・景色）に一言だけ触れる。季節情報は LLM の一般知識で書いてよい
-- 以下の要素は、その土地で確信を持って書ける範囲だけ含める。書けるものだけでよく、無理に全部書こうとしない：
-  - 具体的な地名（山・川・峠・湖・旧街道・神社仏閣・港・台地など固有名詞）
-  - 歴史的背景（城下町・宿場町・港町・産業の起こりなど）
-  - 地形的特徴（盆地・河岸段丘・扇状地・リアス海岸・台地・カルデラなど）
-  - 名物・特産品
-- 検証必須の固有名詞（具体的な人物名・年代・寺社名・建造物名など、誤りが致命的なもの）は、確信があるものだけ書く。曖昧な記憶で捻り出さない
-- 地理常識（〇〇川が南を流れる、台地の上にある、海に面する、住宅地が広がる等）は、Wikipedia 抜粋に直接矛盾しない範囲で LLM の地理知識を活用してよい
-- 祭りやイベントの具体的な日付・回数・年号は書かない（代わりに「例年◯月頃」と表現する）
-
-# Wikipedia 抜粋の使い方
-ユーザメッセージに「[Wikipedia 抜粋]」セクションがある場合、その内容を事実確認のための参考資料として扱ってください。
-- 抜粋の文章をそのまま引用したり、文の構造を真似たりしないでください
-- 抜粋に書かれた地名・施設・歴史事実を素材として、観光ガイド口調の「土地のたより」を自分の言葉で書いてください
-- 抜粋と直接矛盾しない範囲で、LLM が持つ地理・歴史・季節の一般知識を活用して書いてよい。Wikipedia に記載がないだけの事項を省略する必要はない
-- 抜粋セクションがない場合、その市町村の Wikipedia 記事が見つからなかったことを意味します。検証必須の固有名詞（人物名・年代・寺社名）は捻り出さず、地理常識と季節情報の範囲で書いてください
+# 抜粋の使い方
+- 抜粋の文章をそのまま引用したり、文の構造を真似たりしない
+- 抜粋に書かれた地名・施設・歴史事実を素材として、自分の言葉で要約する
+- 抜粋と直接矛盾することは書かない
+- 抜粋に複数の話題がある場合は、地理・歴史・特徴的な要素を優先する
 
 # 出力で禁じる振る舞い
-- 「これ以上の詳述は控えます」「確信を持つ情報が限定されるため」「お書きすることができません」のような自己放棄文・謝罪文は禁止。あくまで 120〜180 字の解説本文だけを出力する
+- 「これ以上の詳述は控えます」「確信を持つ情報が限定されるため」「お書きすることができません」のような自己放棄文・謝罪文は禁止
+- 「準備中」「情報がありません」のような注釈は禁止（これらの表示はフロント側の責任）
+- 抜粋にない事実を補ったり、季節の挨拶を付け加えてはならない
 
 # 参考例
 入力:
 都道府県: 北海道
 市区町村: 函館市
-二十四節気: 処暑（14、8月23日頃〜白露前）
 
 [Wikipedia 抜粋]
 函館市は、北海道渡島地方南部に位置する中核市である。1859年に開港した国際貿易港・函館港を有し、明治期には外国人居留地が形成された。函館山からの夜景は世界三大夜景の一つとされる。
 
-良い出力例（137字、文体は自分の言葉、抜粋の事実を素材化）:
-函館市は北海道渡島地方の南部に位置します。函館山の麓に広がる港町で、1859年に国際貿易港として開港し、明治期には外国人居留地が形成されました。処暑のころ、北海道では夏の暑さが和らぎ、いか漁の最盛期を迎えます。函館港の朝市にも秋の気配が見え始める時期です。`;
+良い出力例（115字、抜粋の事実だけを再構成、自分の言葉で要約）:
+函館市は北海道渡島地方の南部に位置する中核市です。1859 年に国際貿易港として開港した函館港を有し、明治期には外国人居留地が形成されました。函館山からの夜景は世界三大夜景の一つに数えられます。`;
 
 // ---- 純粋関数 ----
 
 /**
- * 二十四節気の番号文字列（'01'〜'24'）を日本語名に変換。
- * 未知の値は undefined を返す。
- */
-export function solarTermToJa(solarTerm) {
-  return SOLAR_TERM_META[solarTerm]?.name;
-}
-
-/**
- * POST /api/describe の body をバリデーション（既存 anthropic.js と同等）。
+ * POST /api/describe の body をバリデーション。
+ *
+ * Plan I で solar_term フィールドを廃止。受信側で送られてきても無視する設計。
  *
  * @param {any} body - JSON.parse 済みの値
- * @returns {{ok: true, value: {prefecture, municipality, solar_term}} | {ok: false, error: string}}
+ * @returns {{ok: true, value: {prefecture, municipality}} | {ok: false, error: string}}
  */
 export function parseDescribeRequest(body) {
   if (!body || typeof body !== 'object') {
     return { ok: false, error: 'body must be an object' };
   }
-  const { prefecture, municipality, solar_term } = body;
+  const { prefecture, municipality } = body;
   if (typeof prefecture !== 'string' || prefecture.length === 0) {
     return { ok: false, error: 'missing required field: prefecture' };
   }
   if (typeof municipality !== 'string' || municipality.length === 0) {
     return { ok: false, error: 'missing required field: municipality' };
   }
-  if (typeof solar_term !== 'string' || !SOLAR_TERM_META[solar_term]) {
-    return { ok: false, error: 'invalid solar_term (must be "01"〜"24")' };
-  }
-  return { ok: true, value: { prefecture, municipality, solar_term } };
+  return { ok: true, value: { prefecture, municipality } };
 }
 
 /**
  * Generator 用の Bedrock Converse API リクエスト body を組み立てる。
  *
- * Converse 形式の特徴（Anthropic Messages API との差異）:
- *   - `system` は配列、要素は `{text: '...'}`
- *   - `messages[*].content` は配列、要素は `{text: '...'}`（マルチモーダル拡張のため）
- *   - `max_tokens` は `inferenceConfig.maxTokens`
- *   - モデルは `modelId`、URL path に入る（body には残しておき呼出側で抽出）
+ * Plan I 以降、Wikipedia 抜粋が必須。抜粋なしの場合は呼び出し側（describe_flow.js）が
+ * Generator を呼ばずに「記事なし」を返す設計なので、ここでは抜粋ありを前提とする。
  *
- * 入力契約は既存 buildMessagesRequest と同じ:
- *   - {prefecture, municipality, solar_term}（必須）
- *   - {wikipediaExtract}（任意、空文字 / null / undefined はセクション省略）
- *   - {regenerationFeedback}（任意、再生成時に judge の指摘を埋め込む）
+ * @param {object} req
+ * @param {string} req.prefecture
+ * @param {string} req.municipality
+ * @param {string} req.wikipediaExtract - cleanExtract 適用済（呼び出し側で保証）
+ * @param {string} [req.regenerationFeedback] - 再生成時の Faithfulness Judge 指摘
  */
 export function buildGeneratorRequest(req) {
-  const meta = SOLAR_TERM_META[req.solar_term];
-  let userText = `都道府県: ${req.prefecture}\n市区町村: ${req.municipality}\n二十四節気: ${meta.name}（${req.solar_term}、${meta.period}）`;
-
-  if (typeof req.wikipediaExtract === 'string' && req.wikipediaExtract.length > 0) {
-    userText += `\n\n[Wikipedia 抜粋]\n${req.wikipediaExtract}`;
-  }
+  let userText = `都道府県: ${req.prefecture}\n市区町村: ${req.municipality}\n\n[Wikipedia 抜粋]\n${req.wikipediaExtract}`;
 
   if (typeof req.regenerationFeedback === 'string' && req.regenerationFeedback.length > 0) {
-    userText += `\n\n[前回の出力で校閲から指摘された箇所]\n${req.regenerationFeedback}\n\n上記の指摘を踏まえ、固有名詞を具体的にし、情緒修飾を避け、事実陳述で書き直してください。`;
+    userText += `\n\n[前回の出力で校閲から指摘された箇所]\n${req.regenerationFeedback}\n\n上記の指摘を踏まえ、抜粋にない事実を出さずに書き直してください。`;
   }
 
   return {

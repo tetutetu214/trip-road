@@ -22,7 +22,7 @@ describe('phaseToText', () => {
   });
 });
 
-describe('formatDebugInfo', () => {
+describe('formatDebugInfo (Plan I)', () => {
   it('null / undefined は空文字', () => {
     expect(formatDebugInfo(null)).toBe('');
     expect(formatDebugInfo(undefined)).toBe('');
@@ -32,13 +32,19 @@ describe('formatDebugInfo', () => {
     expect(formatDebugInfo({ cached: true })).toBe('[DEBUG] (cached, no judge info)');
   });
 
+  it('no_wikipedia=true は専用の表示', () => {
+    expect(formatDebugInfo({ no_wikipedia: true })).toBe(
+      '[DEBUG] no_wikipedia (Generator was not called)'
+    );
+  });
+
   it('judge_passed=null（fail-open）なら error を含む 2 行', () => {
     const text = formatDebugInfo({
       judge_passed: null,
-      judge_error: 'sonnet down',
+      judge_error: 'nova down',
     });
     expect(text).toContain('judge unavailable');
-    expect(text).toContain('sonnet down');
+    expect(text).toContain('nova down');
   });
 
   it('judge_passed=null かつ judge_error=null なら「-」を出す', () => {
@@ -47,38 +53,45 @@ describe('formatDebugInfo', () => {
     expect(text).toContain('-');
   });
 
-  it('judge_passed=true + 全軸スコア + 減点なし', () => {
+  it('judge_passed=true + faithfulness_score + out_of_kb_terms 空', () => {
     const text = formatDebugInfo({
       judge_passed: true,
-      judge_scores: { accuracy: 5, specificity: 5, season_fit: 5, density: 5 },
-      judge_deductions: { accuracy: [], specificity: [], season_fit: [], density: [] },
+      faithfulness_score: 5,
+      out_of_kb_terms: [],
       regenerated: false,
+      fallback_to_extract: false,
     });
     expect(text).toContain('judge_passed: true');
     expect(text).toContain('regen: false');
-    expect(text).toContain('accuracy: 5');
-    expect(text).toContain('density: 5');
-    expect(text).not.toContain('deductions:');
+    expect(text).toContain('fallback: false');
+    expect(text).toContain('faithfulness_score: 5');
+    expect(text).not.toContain('out_of_kb_terms:');
   });
 
-  it('judge_passed=false + 減点ありなら deductions セクションを表示', () => {
+  it('judge_passed=false + out_of_kb_terms ありなら一覧を表示', () => {
     const text = formatDebugInfo({
       judge_passed: false,
+      faithfulness_score: 3,
+      out_of_kb_terms: ['タマネギ', 'メロン'],
       regenerated: true,
-      judge_scores: { accuracy: 5, specificity: 2, season_fit: 5, density: 3 },
-      judge_deductions: {
-        accuracy: [],
-        specificity: ['桜が美しい（汎用）'],
-        season_fit: [],
-        density: ['淡紅色に染まり（情緒）'],
-      },
+      fallback_to_extract: false,
     });
     expect(text).toContain('judge_passed: false');
     expect(text).toContain('regen: true');
-    expect(text).toContain('specificity: 2');
-    expect(text).toContain('density: 3');
-    expect(text).toContain('deductions:');
-    expect(text).toContain('specificity: 桜が美しい');
-    expect(text).toContain('density: 淡紅色に染まり');
+    expect(text).toContain('faithfulness_score: 3');
+    expect(text).toContain('out_of_kb_terms:');
+    expect(text).toContain('・タマネギ');
+    expect(text).toContain('・メロン');
+  });
+
+  it('fallback_to_extract=true も表示される', () => {
+    const text = formatDebugInfo({
+      judge_passed: false,
+      faithfulness_score: 2,
+      out_of_kb_terms: [],
+      regenerated: true,
+      fallback_to_extract: true,
+    });
+    expect(text).toContain('fallback: true');
   });
 });
