@@ -172,10 +172,10 @@ describe('resolveWikipediaTitle', () => {
 });
 
 describe('buildCacheKey', () => {
-  it('muni_code を含むダミー URL の Request を返す', () => {
+  it('muni_code を含む v2 ダミー URL の Request を返す (Plan I Phase 2-3)', () => {
     const req = buildCacheKey('14153');
     expect(req).toBeInstanceOf(Request);
-    expect(req.url).toBe('https://wikipedia-cache.internal/14153');
+    expect(req.url).toBe('https://wikipedia-cache.internal/v2/14153');
   });
 
   it('別の muni_code は別のキーになる', () => {
