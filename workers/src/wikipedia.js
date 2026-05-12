@@ -21,8 +21,9 @@ export const MAX_EXTRACT_LENGTH = 1500;
 // Workers Cache の TTL（30日）
 export const CACHE_TTL_SECONDS = 30 * 24 * 60 * 60;
 
-// 1 タイトルあたりの試行上限（attempt=0 / attempt=1 の 2 回）
-const MAX_TITLE_ATTEMPTS = 2;
+// 1 タイトルあたりの試行上限（attempt=0 / 1 / 2 の 3 回）
+// attempt=2 は政令指定都市の区への対応（Plan I Phase 2-1）。
+const MAX_TITLE_ATTEMPTS = 3;
 
 // ---- 純粋関数 ----
 
@@ -90,7 +91,11 @@ export function cleanExtract(text, maxLen = MAX_EXTRACT_LENGTH) {
  *
  * - attempt=0: municipality をそのまま使う（redirects=true で大半は解決）
  * - attempt=1: "{municipality} ({prefecture})" 形式で曖昧さ回避
- * - attempt>=2: null（打ち切り）
+ * - attempt=2: 政令指定都市の区パターン（Plan I Phase 2-1）。
+ *   municipality が「{市名}{区名}」形式（例:「横浜市中区」「相模原市緑区」）
+ *   なら「{区名} ({市名})」（例:「中区 (横浜市)」「緑区 (相模原市)」）に変換。
+ *   非該当なら null。
+ * - attempt>=3: null（打ち切り）
  *
  * @param {string} municipality
  * @param {string} prefecture
@@ -100,6 +105,12 @@ export function cleanExtract(text, maxLen = MAX_EXTRACT_LENGTH) {
 export function resolveWikipediaTitle(municipality, prefecture, attempt) {
   if (attempt === 0) return municipality;
   if (attempt === 1) return `${municipality} (${prefecture})`;
+  if (attempt === 2) {
+    // 政令指定都市の区パターン: 「{N+}市{M+}区」を「{M+}区 ({N+}市)」へ
+    const m = municipality.match(/^(.+市)(.+区)$/);
+    if (m) return `${m[2]} (${m[1]})`;
+    return null;
+  }
   return null;
 }
 

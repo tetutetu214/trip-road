@@ -149,8 +149,24 @@ describe('resolveWikipediaTitle', () => {
     expect(resolveWikipediaTitle('府中市', '東京都', 1)).toBe('府中市 (東京都)');
   });
 
-  it('attempt が範囲外（>=2）なら null', () => {
+  it('attempt=2 は政令指定都市の区パターン「{市}{区}」を「{区} ({市})」へ変換 (Plan I Phase 2-1)', () => {
+    expect(resolveWikipediaTitle('横浜市中区', '神奈川県', 2)).toBe('中区 (横浜市)');
+    expect(resolveWikipediaTitle('相模原市緑区', '神奈川県', 2)).toBe('緑区 (相模原市)');
+    expect(resolveWikipediaTitle('川崎市麻生区', '神奈川県', 2)).toBe('麻生区 (川崎市)');
+    expect(resolveWikipediaTitle('大阪市北区', '大阪府', 2)).toBe('北区 (大阪市)');
+  });
+
+  it('attempt=2 で政令市の区パターンに該当しない municipality は null', () => {
     expect(resolveWikipediaTitle('相模原市', '神奈川県', 2)).toBeNull();
+    expect(resolveWikipediaTitle('鎌倉市', '神奈川県', 2)).toBeNull();
+    expect(resolveWikipediaTitle('箱根町', '神奈川県', 2)).toBeNull();
+    // 東京 23 区（municipality に「市」が含まれない）は対象外
+    expect(resolveWikipediaTitle('中央区', '東京都', 2)).toBeNull();
+  });
+
+  it('attempt が範囲外（>=3）なら null', () => {
+    expect(resolveWikipediaTitle('相模原市', '神奈川県', 3)).toBeNull();
+    expect(resolveWikipediaTitle('横浜市中区', '神奈川県', 3)).toBeNull();
   });
 });
 
