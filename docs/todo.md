@@ -477,9 +477,10 @@ Plan H 反映直後の 5/9 朝に H-12 観測フェーズに入ったが、て�
 ### 残課題（Plan I Phase 2 候補）
 
 - [x] **政令指定都市の区の Wikipedia 取得失敗** (Phase 2-1、2026-05-12 完了): `resolveWikipediaTitle` に attempt=2 を追加し「{市}{区}」→「{区} ({市})」変換で no_wikipedia を 2/10 → 0/10 に。詳細は `knowledge.md` 4.25 章
-- [ ] **抜粋本文が薄い問題** (Phase 2-3 候補、Phase 2-1 で顕在化): Wikipedia API の `exintro=true` で intro section のみ取得しているため、政令市の区など intro が短い記事では 32 字程度しか取れない。`exintro` を外す or `exsentences=N` で文数指定する方を検討
-- [ ] **Faithfulness Judge の形態素解析化** (Phase 2-2 候補): Nova Pro Judge の指示無視リスクをゼロにするため、kuromoji 等の軽量形態素解析器で「抜粋外の固有名詞混入」を決定論的に検出。Workers 上で動く実装を調査
-- [ ] **抜粋転載フォールバック時の体裁改善** (Phase 2-3 候補): 1 文転載で終わると体裁が悪い（箱根町・秦野市・横浜市中区・相模原市緑区）。`truncateExtractForFallback` を最低字数 120 を意識した複数文連結に、ただし抜粋本文の厚みと統合検討
+- [x] **抜粋本文が薄い問題** (Phase 2-3、2026-05-12 完了): `exintro=true` を撤廃して本文全体を取得、`buildCacheKey` を v2 に昇格して旧キャッシュ無効化。合格率 60% → 100%、fallback_to_extract 40% → 0%。詳細は `knowledge.md` 4.26 章
+- [x] **抜粋転載フォールバック時の体裁改善** (Phase 2-3 で吸収): 全市町村が Generator 要約で通過するようになったためフォールバック自体がほぼ発生しない
+- [ ] **Faithfulness Judge の形態素解析化** (Phase 2-2 候補、引き続き): Phase 2-3 で `out_of_kb_terms` 誤検知（抜粋にあるのに見落とし）が観測されたため動機強化。kuromoji 等の軽量形態素解析器で「抜粋外の固有名詞混入」を決定論的に検出、Workers 上で動く実装を調査
+- [ ] **Wikipedia 抜粋上限の見直し** (低優先): `MAX_EXTRACT_LENGTH=1500` で全市町村が上限ピッタリ。2000-3000 字に上げる余地もあるが、レイテンシと Bedrock input tokens 課金とのトレードオフ
 
 ---
 
