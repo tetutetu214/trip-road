@@ -18,17 +18,21 @@ import {
   getTelemetryCount,
   getTelemetryBatch,
   clearTelemetryBatch,
+  getHillshadeEnabled,
+  setHillshadeEnabled as persistHillshade,
 } from './storage.js';
 import { fetchDescription, sendTelemetryBatch } from './api.js';
 import { identifyMunicipality, prefetchNeighbors } from './muni.js';
-import { initMap, updateCurrentLocation, addTrackPoint, setTrack } from './map.js';
+import { initMap, updateCurrentLocation, addTrackPoint, setTrack, setHillshadeEnabled as applyHillshadeLayer } from './map.js';
 import { startWatching } from './geo.js';
+import { fetchElevation, createElevationUpdater } from './elevation.js';
 import { generateTraceId, buildTelemetryEntry, shouldSample } from './telemetry.js';
 import { shouldEnterSwitchFlow } from './switch_flow.js';
 import {
   showPasswordScreen, showMainScreen,
   showPasswordError, clearPasswordError,
-  setMuniName, setMuniRomaji, setSpeed, setVisitedCount,
+  setMuniName, setMuniRomaji, setSpeed, setElevation, setVisitedCount,
+  setHillshadeToggleState,
   setDescription, setDescriptionLoading, setDescriptionLoadingPhase, setDescriptionFailed,
   setDescriptionNoWikipedia, clearDescription,
   setGpsActive, setPermissionDenied,
@@ -37,6 +41,7 @@ import {
 
 let currentMuniCd = null;
 let isFirstFix = true;
+let elevationUpdater = null;
 
 // Plan E (6.5b): デバッグオーバーレイの状態管理
 // currentJudgeData は最後に表示した解説の判定情報を保持し、
@@ -146,6 +151,28 @@ async function enterMainApp(password) {
     });
   }
 
+  // 陰影起伏図トグル（⛰️ ボタン）。永続化値を反映し、クリックで ON/OFF。
+  const hillshadeBtn = document.getElementById('hillshade-toggle');
+  if (hillshadeBtn) {
+    const initial = getHillshadeEnabled();
+    applyHillshadeLayer(initial);
+    setHillshadeToggleState(initial);
+    hillshadeBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const next = !getHillshadeEnabled();
+      persistHillshade(next);
+      applyHillshadeLayer(next);
+      setHillshadeToggleState(next);
+    });
+  }
+
+  // 標高更新（Issue #46）。GPS coords.altitude が取れればそれを使い、
+  // 取れなければ国土地理院 標高APIに 5s/100m debounce でフォールバック。
+  elevationUpdater = createElevationUpdater(
+    (lat, lon) => fetchElevation(lat, lon),
+    (m) => setElevation(m),
+  );
+
   // テレメトリ自動 flush: 閾値超えていれば 60 秒ごとに Workers 経由で S3 へ送信
   setInterval(() => {
     if (getTelemetryCount() >= TELEMETRY_FLUSH_THRESHOLD) {
@@ -177,11 +204,14 @@ async function tryFlushTelemetry(password) {
 }
 
 // === GPS 位置更新時の処理 ===
-async function handlePosition({ lat, lon, speed }, password) {
+async function handlePosition({ lat, lon, speed, altitude }, password) {
   setGpsActive(true);
 
   // 速度表示
   setSpeed(speed !== null && speed >= 0 ? Math.round(speed * 3.6) : null);
+
+  // 標高更新（Issue #46）
+  if (elevationUpdater) elevationUpdater(lat, lon, altitude);
 
   // 地図更新 + 軌跡追加
   // F-4: wasFirstFix を保存してから isFirstFix を倒す。

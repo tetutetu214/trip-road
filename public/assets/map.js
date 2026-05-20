@@ -2,11 +2,12 @@
  * Leaflet 初期化、現在地マーカー、軌跡ポリラインの管理。
  * Leaflet は index.html で CDN 読込の global `L` を使う。
  */
-import { TILE_URL } from './config.js';
+import { TILE_URL, HILLSHADE_TILE_URL } from './config.js';
 
 let map = null;
 let marker = null;
 let trackLine = null;
+let hillshadeLayer = null;
 
 export function initMap(containerId) {
   map = L.map(containerId, {
@@ -16,6 +17,13 @@ export function initMap(containerId) {
     attributionControl: false,
   });
   L.tileLayer(TILE_URL, { maxZoom: 18, tileSize: 256 }).addTo(map);
+
+  // 陰影起伏図レイヤー。初期は add しない。setHillshadeEnabled で切替。
+  hillshadeLayer = L.tileLayer(HILLSHADE_TILE_URL, {
+    maxZoom: 18,
+    maxNativeZoom: 16,
+    opacity: 0.3,
+  });
 
   // 現在地マーカー（SVG divIcon）
   const iconHtml = `<svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
@@ -86,4 +94,13 @@ export function addTrackPoint(lat, lon) {
 export function setTrack(points) {
   if (!trackLine) return;
   trackLine.setLatLngs(points.map(p => [p.lat, p.lon]));
+}
+
+/**
+ * 陰影起伏図レイヤーの ON/OFF。
+ */
+export function setHillshadeEnabled(enabled) {
+  if (!map || !hillshadeLayer) return;
+  if (enabled && !map.hasLayer(hillshadeLayer)) hillshadeLayer.addTo(map);
+  if (!enabled && map.hasLayer(hillshadeLayer)) map.removeLayer(hillshadeLayer);
 }

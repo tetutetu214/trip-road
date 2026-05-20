@@ -12,6 +12,8 @@ import {
     setDescriptionNoWikipedia,
     clearDescription,
     setDescriptionLoadingPhase,
+    setElevation,
+    setHillshadeToggleState,
 } from '../public/assets/ui.js';
 
 function makeEl() {
@@ -21,6 +23,11 @@ function makeEl() {
             add: (c) => classes.add(c),
             remove: (c) => classes.delete(c),
             contains: (c) => classes.has(c),
+            toggle: (c, force) => {
+                const want = force === undefined ? !classes.has(c) : !!force;
+                if (want) classes.add(c); else classes.delete(c);
+                return want;
+            },
         },
         style: {},
         textContent: '',
@@ -38,7 +45,13 @@ beforeEach(() => {
         description: makeEl(),
         'description-skeleton': makeEl(),
         'description-loading-text': makeEl(),
+        elevation: makeEl(),
+        'hillshade-toggle': makeEl(),
     };
+    // hillshade-toggle に最小限の属性 API を追加
+    els['hillshade-toggle'].attrs = {};
+    els['hillshade-toggle'].setAttribute = function (k, v) { this.attrs[k] = v; };
+    els['hillshade-toggle'].getAttribute = function (k) { return this.attrs[k] ?? null; };
     els['description-skeleton'].classList.add('hidden');
     els['description-loading-text'].classList.add('hidden');
     globalThis.document = {
@@ -111,5 +124,38 @@ describe('setDescriptionNoWikipedia (Plan I)', () => {
         expect(els.description.classList.contains('muted')).toBe(true);
         expect(els['description-skeleton'].classList.contains('hidden')).toBe(true);
         expect(els['description-loading-text'].classList.contains('hidden')).toBe(true);
+    });
+});
+
+describe('setElevation (Issue #46)', () => {
+    it('数値を渡すと textContent にその文字列が入る', () => {
+        setElevation(123);
+        expect(els.elevation.textContent).toBe('123');
+    });
+    it('0 も "0" として表示する（海抜 0m）', () => {
+        setElevation(0);
+        expect(els.elevation.textContent).toBe('0');
+    });
+    it('null は "--" 表示', () => {
+        setElevation(null);
+        expect(els.elevation.textContent).toBe('--');
+    });
+    it('undefined も "--" 表示', () => {
+        setElevation(undefined);
+        expect(els.elevation.textContent).toBe('--');
+    });
+});
+
+describe('setHillshadeToggleState (Issue #46)', () => {
+    it('true で hillshade-on クラスと aria-pressed=true を付与', () => {
+        setHillshadeToggleState(true);
+        expect(els['hillshade-toggle'].classList.contains('hillshade-on')).toBe(true);
+        expect(els['hillshade-toggle'].getAttribute('aria-pressed')).toBe('true');
+    });
+    it('false で hillshade-on クラスを外し、aria-pressed=false を付与', () => {
+        setHillshadeToggleState(true);
+        setHillshadeToggleState(false);
+        expect(els['hillshade-toggle'].classList.contains('hillshade-on')).toBe(false);
+        expect(els['hillshade-toggle'].getAttribute('aria-pressed')).toBe('false');
     });
 });

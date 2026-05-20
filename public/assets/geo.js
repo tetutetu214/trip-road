@@ -9,7 +9,7 @@ const OPTIONS = {
 };
 
 /**
- * @param {(pos: {lat: number, lon: number, speed: number|null}) => void} onSuccess
+ * @param {(pos: {lat: number, lon: number, speed: number|null, altitude: number|null}) => void} onSuccess
  * @param {(err: GeolocationPositionError) => void} onError
  * @returns {number} watchId
  */
@@ -24,6 +24,7 @@ export function startWatching(onSuccess, onError) {
         lat: position.coords.latitude,
         lon: position.coords.longitude,
         speed: position.coords.speed,
+        altitude: position.coords.altitude,
       });
     },
     onError,
