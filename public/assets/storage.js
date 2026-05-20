@@ -124,3 +124,13 @@ export function clearTelemetryBatch(traceIds) {
   saveState(state);
 }
 
+// === Hillshade overlay (Issue #46) ===
+export function getHillshadeEnabled() {
+  return loadState().hillshadeEnabled === true;
+}
+export function setHillshadeEnabled(enabled) {
+  const state = loadState();
+  state.hillshadeEnabled = !!enabled;
+  saveState(state);
+}
+

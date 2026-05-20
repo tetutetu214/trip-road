@@ -31,6 +31,17 @@ export function setMuniRomaji(romaji) {
 export function setSpeed(kmh) {
   $('speed').textContent = kmh === null ? '--' : String(kmh);
 }
+export function setElevation(m) {
+  const el = $('elevation');
+  if (!el) return;
+  el.textContent = (m === null || m === undefined) ? '--' : String(m);
+}
+export function setHillshadeToggleState(enabled) {
+  const btn = $('hillshade-toggle');
+  if (!btn) return;
+  btn.classList.toggle('hillshade-on', !!enabled);
+  btn.setAttribute('aria-pressed', String(!!enabled));
+}
 export function setVisitedCount(n) {
   $('visited-count').textContent = String(n);
 }

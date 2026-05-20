@@ -14,6 +14,8 @@ import {
   getTelemetryBatch,
   getTelemetryCount,
   clearTelemetryBatch,
+  getHillshadeEnabled,
+  setHillshadeEnabled,
 } from '../public/assets/storage.js';
 
 // localStorage のメモリモック
@@ -128,5 +130,26 @@ describe('telemetry helpers', () => {
     clearTelemetryBatch(['a', 'c']);
     expect(getTelemetryCount()).toBe(1);
     expect(getTelemetryBatch(10)[0].trace_id).toBe('b');
+  });
+});
+
+describe('hillshade overlay (Issue #46)', () => {
+  it('初期は false', () => {
+    expect(getHillshadeEnabled()).toBe(false);
+  });
+  it('setHillshadeEnabled(true) で永続化される', () => {
+    setHillshadeEnabled(true);
+    expect(getHillshadeEnabled()).toBe(true);
+  });
+  it('setHillshadeEnabled(false) で false に戻せる', () => {
+    setHillshadeEnabled(true);
+    setHillshadeEnabled(false);
+    expect(getHillshadeEnabled()).toBe(false);
+  });
+  it('他の state と独立（visited に影響しない）', () => {
+    markVisited('14151', '相模原市緑区', '神奈川県');
+    setHillshadeEnabled(true);
+    expect(getVisitedCount()).toBe(1);
+    expect(getHillshadeEnabled()).toBe(true);
   });
 });

@@ -484,6 +484,26 @@ Plan H 反映直後の 5/9 朝に H-12 観測フェーズに入ったが、て�
 
 ---
 
+---
+
+## Issue #46: 標高バッジと陰影起伏図トグル（2026-05-21）
+
+UI 側で「立体的な地理把握」を補強。Generator/Judge/テレメトリは無改修、Wikipedia 要約パイプラインは触らない方針。
+
+- [x] `public/assets/elevation.js` 新設（`fetchElevation` / `haversineMeters` / `createElevationUpdater`）
+- [x] `public/assets/map.js` に `setHillshadeEnabled` 追加（陰影起伏図レイヤーの ON/OFF）
+- [x] `public/assets/storage.js` に `getHillshadeEnabled` / `setHillshadeEnabled` 追加（localStorage 永続化）
+- [x] `public/assets/ui.js` に `setElevation` / `setHillshadeToggleState` 追加
+- [x] `public/assets/geo.js` の `startWatching` で `position.coords.altitude` も返すよう拡張
+- [x] `public/assets/app.js` で陰影起伏図トグル UI と `createElevationUpdater` 配線
+- [x] `public/assets/config.js` に `HILLSHADE_TILE_URL` / `ELEVATION_API_URL` 追加
+- [x] `public/index.html` に ELEV バッジと ⛰️ トグルボタンの DOM 追加
+- [x] `public/assets/app.css` にスタイル追加（.elevation-*, .hillshade-toggle）
+- [x] Vitest テスト追加（elevation.test.js 15件、storage 4件、ui_dom 6件 = 計25件追加、全 69件 pass）
+- [ ] **観測（人間タスク）**: 本番反映後、iPhone 実機で `https://trip-road.tetutetu214.com/` を開いて (1) ⛰️ トグルで陰影起伏図 ON/OFF が動くか、(2) 標高バッジに数値が出るか、(3) CORS NG なら別 Issue で Workers 経由に格上げ
+
+---
+
 ### さらに先（無時系列、検討候補）
 
 - [ ] Service Worker によるオフライン対応
