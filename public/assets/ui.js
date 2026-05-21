@@ -36,11 +36,12 @@ export function setElevation(m) {
   if (!el) return;
   el.textContent = (m === null || m === undefined) ? '--' : String(m);
 }
-export function setHillshadeToggleState(enabled) {
+export function setHillshadeToggleState(level) {
   const btn = $('hillshade-toggle');
   if (!btn) return;
-  btn.classList.toggle('hillshade-on', !!enabled);
-  btn.setAttribute('aria-pressed', String(!!enabled));
+  btn.classList.toggle('hillshade-weak', level === 'weak');
+  btn.classList.toggle('hillshade-strong', level === 'strong');
+  btn.setAttribute('aria-pressed', String(level !== 'off'));
 }
 export function setVisitedCount(n) {
   $('visited-count').textContent = String(n);

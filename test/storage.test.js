@@ -14,8 +14,8 @@ import {
   getTelemetryBatch,
   getTelemetryCount,
   clearTelemetryBatch,
-  getHillshadeEnabled,
-  setHillshadeEnabled,
+  getHillshadeLevel,
+  setHillshadeLevel,
 } from '../public/assets/storage.js';
 
 // localStorage のメモリモック
@@ -133,23 +133,27 @@ describe('telemetry helpers', () => {
   });
 });
 
-describe('hillshade overlay (Issue #46)', () => {
-  it('初期は false', () => {
-    expect(getHillshadeEnabled()).toBe(false);
+describe('hillshade overlay (Issue #48: 3段階)', () => {
+  it('初期は "off"', () => {
+    expect(getHillshadeLevel()).toBe('off');
   });
-  it('setHillshadeEnabled(true) で永続化される', () => {
-    setHillshadeEnabled(true);
-    expect(getHillshadeEnabled()).toBe(true);
+  it('weak / strong / off を永続化できる', () => {
+    setHillshadeLevel('weak');
+    expect(getHillshadeLevel()).toBe('weak');
+    setHillshadeLevel('strong');
+    expect(getHillshadeLevel()).toBe('strong');
+    setHillshadeLevel('off');
+    expect(getHillshadeLevel()).toBe('off');
   });
-  it('setHillshadeEnabled(false) で false に戻せる', () => {
-    setHillshadeEnabled(true);
-    setHillshadeEnabled(false);
-    expect(getHillshadeEnabled()).toBe(false);
+  it('不正な値は "off" に正規化される', () => {
+    setHillshadeLevel('weak');
+    setHillshadeLevel('invalid');
+    expect(getHillshadeLevel()).toBe('off');
   });
   it('他の state と独立（visited に影響しない）', () => {
     markVisited('14151', '相模原市緑区', '神奈川県');
-    setHillshadeEnabled(true);
+    setHillshadeLevel('strong');
     expect(getVisitedCount()).toBe(1);
-    expect(getHillshadeEnabled()).toBe(true);
+    expect(getHillshadeLevel()).toBe('strong');
   });
 });

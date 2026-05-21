@@ -146,16 +146,30 @@ describe('setElevation (Issue #46)', () => {
     });
 });
 
-describe('setHillshadeToggleState (Issue #46)', () => {
-    it('true で hillshade-on クラスと aria-pressed=true を付与', () => {
-        setHillshadeToggleState(true);
-        expect(els['hillshade-toggle'].classList.contains('hillshade-on')).toBe(true);
+describe('setHillshadeToggleState (Issue #48: 3段階)', () => {
+    it('"weak" で hillshade-weak のみ付与、aria-pressed=true', () => {
+        setHillshadeToggleState('weak');
+        expect(els['hillshade-toggle'].classList.contains('hillshade-weak')).toBe(true);
+        expect(els['hillshade-toggle'].classList.contains('hillshade-strong')).toBe(false);
         expect(els['hillshade-toggle'].getAttribute('aria-pressed')).toBe('true');
     });
-    it('false で hillshade-on クラスを外し、aria-pressed=false を付与', () => {
-        setHillshadeToggleState(true);
-        setHillshadeToggleState(false);
-        expect(els['hillshade-toggle'].classList.contains('hillshade-on')).toBe(false);
+    it('"strong" で hillshade-strong のみ付与、aria-pressed=true', () => {
+        setHillshadeToggleState('strong');
+        expect(els['hillshade-toggle'].classList.contains('hillshade-strong')).toBe(true);
+        expect(els['hillshade-toggle'].classList.contains('hillshade-weak')).toBe(false);
+        expect(els['hillshade-toggle'].getAttribute('aria-pressed')).toBe('true');
+    });
+    it('"off" で両クラスを外し、aria-pressed=false', () => {
+        setHillshadeToggleState('strong');
+        setHillshadeToggleState('off');
+        expect(els['hillshade-toggle'].classList.contains('hillshade-weak')).toBe(false);
+        expect(els['hillshade-toggle'].classList.contains('hillshade-strong')).toBe(false);
         expect(els['hillshade-toggle'].getAttribute('aria-pressed')).toBe('false');
+    });
+    it('weak → strong に切替えると weak が外れて strong だけ残る', () => {
+        setHillshadeToggleState('weak');
+        setHillshadeToggleState('strong');
+        expect(els['hillshade-toggle'].classList.contains('hillshade-weak')).toBe(false);
+        expect(els['hillshade-toggle'].classList.contains('hillshade-strong')).toBe(true);
     });
 });
