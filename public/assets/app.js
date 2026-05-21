@@ -18,12 +18,12 @@ import {
   getTelemetryCount,
   getTelemetryBatch,
   clearTelemetryBatch,
-  getHillshadeEnabled,
-  setHillshadeEnabled as persistHillshade,
+  getHillshadeLevel,
+  setHillshadeLevel as persistHillshadeLevel,
 } from './storage.js';
 import { fetchDescription, sendTelemetryBatch } from './api.js';
 import { identifyMunicipality, prefetchNeighbors } from './muni.js';
-import { initMap, updateCurrentLocation, addTrackPoint, setTrack, setHillshadeEnabled as applyHillshadeLayer } from './map.js';
+import { initMap, updateCurrentLocation, addTrackPoint, setTrack, setHillshadeLevel as applyHillshadeLayer } from './map.js';
 import { startWatching } from './geo.js';
 import { fetchElevation, createElevationUpdater } from './elevation.js';
 import { generateTraceId, buildTelemetryEntry, shouldSample } from './telemetry.js';
@@ -151,16 +151,19 @@ async function enterMainApp(password) {
     });
   }
 
-  // 陰影起伏図トグル（⛰️ ボタン）。永続化値を反映し、クリックで ON/OFF。
+  // 陰影起伏図トグル（⛰️ ボタン）。Issue #48 で off → weak → strong → off の 3 段階循環に。
   const hillshadeBtn = document.getElementById('hillshade-toggle');
   if (hillshadeBtn) {
-    const initial = getHillshadeEnabled();
+    const HILLSHADE_CYCLE = ['off', 'weak', 'strong'];
+    const initial = getHillshadeLevel();
     applyHillshadeLayer(initial);
     setHillshadeToggleState(initial);
     hillshadeBtn.addEventListener('click', (e) => {
       e.preventDefault();
-      const next = !getHillshadeEnabled();
-      persistHillshade(next);
+      const cur = getHillshadeLevel();
+      const idx = HILLSHADE_CYCLE.indexOf(cur);
+      const next = HILLSHADE_CYCLE[(idx + 1) % HILLSHADE_CYCLE.length];
+      persistHillshadeLevel(next);
       applyHillshadeLayer(next);
       setHillshadeToggleState(next);
     });

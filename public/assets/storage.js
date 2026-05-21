@@ -124,13 +124,15 @@ export function clearTelemetryBatch(traceIds) {
   saveState(state);
 }
 
-// === Hillshade overlay (Issue #46) ===
-export function getHillshadeEnabled() {
-  return loadState().hillshadeEnabled === true;
+// === Hillshade overlay (Issue #46 → #48: OFF/弱/強の3段階) ===
+const HILLSHADE_LEVELS = new Set(['off', 'weak', 'strong']);
+export function getHillshadeLevel() {
+  const v = loadState().hillshadeLevel;
+  return HILLSHADE_LEVELS.has(v) ? v : 'off';
 }
-export function setHillshadeEnabled(enabled) {
+export function setHillshadeLevel(level) {
   const state = loadState();
-  state.hillshadeEnabled = !!enabled;
+  state.hillshadeLevel = HILLSHADE_LEVELS.has(level) ? level : 'off';
   saveState(state);
 }
 

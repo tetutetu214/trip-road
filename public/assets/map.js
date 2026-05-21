@@ -97,10 +97,17 @@ export function setTrack(points) {
 }
 
 /**
- * 陰影起伏図レイヤーの ON/OFF。
+ * 陰影起伏図レイヤーのレベル切替（Issue #48: off / weak / strong）。
+ * off ならレイヤーを map から外し、weak/strong なら opacity を切替えて add。
  */
-export function setHillshadeEnabled(enabled) {
+const HILLSHADE_OPACITY = { off: 0, weak: 0.4, strong: 0.7 };
+export function setHillshadeLevel(level) {
   if (!map || !hillshadeLayer) return;
-  if (enabled && !map.hasLayer(hillshadeLayer)) hillshadeLayer.addTo(map);
-  if (!enabled && map.hasLayer(hillshadeLayer)) map.removeLayer(hillshadeLayer);
+  const op = HILLSHADE_OPACITY[level] ?? 0;
+  if (op === 0) {
+    if (map.hasLayer(hillshadeLayer)) map.removeLayer(hillshadeLayer);
+    return;
+  }
+  hillshadeLayer.setOpacity(op);
+  if (!map.hasLayer(hillshadeLayer)) hillshadeLayer.addTo(map);
 }

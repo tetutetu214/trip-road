@@ -385,7 +385,9 @@ body {
   opacity: 0.4;
 }
 .hillshade-toggle:active { opacity: 0.6; }
-.hillshade-toggle.hillshade-on { opacity: 1; }
+/* Issue #48: 3 段階トグル。weak はやや濃く、strong は完全不透明 */
+.hillshade-toggle.hillshade-weak { opacity: 0.7; }
+.hillshade-toggle.hillshade-strong { opacity: 1; }
 
 /* Plan E (6.5b): デバッグオーバーレイ。description のすぐ下に出す */
 .debug-info {

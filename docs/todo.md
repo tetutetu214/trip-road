@@ -500,7 +500,20 @@ UI 側で「立体的な地理把握」を補強。Generator/Judge/テレメト�
 - [x] `public/index.html` に ELEV バッジと ⛰️ トグルボタンの DOM 追加
 - [x] `public/assets/app.css` にスタイル追加（.elevation-*, .hillshade-toggle）
 - [x] Vitest テスト追加（elevation.test.js 15件、storage 4件、ui_dom 6件 = 計25件追加、全 69件 pass）
-- [ ] **観測（人間タスク）**: 本番反映後、iPhone 実機で `https://trip-road.tetutetu214.com/` を開いて (1) ⛰️ トグルで陰影起伏図 ON/OFF が動くか、(2) 標高バッジに数値が出るか、(3) CORS NG なら別 Issue で Workers 経由に格上げ
+- [x] 本番反映: `bash deploy_frontend.sh`（HTTP 200 確認、2026-05-21）
+- [ ] **観測（人間タスク）**: iPhone 実機で `https://trip-road.tetutetu214.com/` を開いて (1) ⛰️ トグルで陰影起伏図 ON/OFF が動くか、(2) 標高バッジに数値が出るか、(3) CORS NG なら別 Issue で Workers 経由に格上げ
+
+## Issue #48: 陰影起伏図トグルを 3 段階（OFF/弱/強）に拡張（2026-05-21）
+
+Issue #46 の opacity 0.3 は控えめという実機フィードバックを受け、循環トグルで濃さを切替えられるように拡張。
+
+- [x] `storage.js`: `hillshadeEnabled` → `hillshadeLevel`（'off'/'weak'/'strong'）
+- [x] `map.js`: `setHillshadeEnabled` → `setHillshadeLevel`、opacity マップ（off=0 / weak=0.4 / strong=0.7）
+- [x] `ui.js`: `setHillshadeToggleState` を level 文字列対応に
+- [x] `app.js`: クリックで `off → weak → strong → off` の循環ロジック
+- [x] `app.css`: `.hillshade-on` を `.hillshade-weak` / `.hillshade-strong` に分離
+- [x] Vitest 更新（storage/ui_dom、全 71 件 pass）
+- [ ] PR 作成・マージ・本番反映 → 次タスク
 
 ---
 
