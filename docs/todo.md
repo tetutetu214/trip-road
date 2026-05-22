@@ -323,14 +323,14 @@ Issue #36。Generator が引ける固有名詞の在庫を厚くする。
 
 ### G-3（高優先）: Wikidata QID マッピング表
 
-Issue #37。1741 市町村 × QID 表を 1 回だけオフラインで生成。手作業ゼロのバッチ。
+Issue #37。1905 市町村 × QID 表を 1 回だけオフラインで生成。手作業ゼロのバッチ。2026-05-22 完了。
 
-- [ ] `preprocess/build_wikidata_qid_map.py` 新設（SPARQL `wdt:P429` で QID 取得）
-- [ ] レート制限（1 req/sec）+ User-Agent 必須
-- [ ] `public/wikidata_qid.json` 出力（≒ 100 KB）
-- [ ] 政令市の区も親市と区別して取得（Issue #15 と同時解消の見込み）
-- [ ] 95% 以上で QID 解決、残りは手動補完または fallback 設計
-- [ ] ブランチ: `feature/wikidata-qid-mapping`
+- [x] `preprocess/build_wikidata_qid_map.py` 新設（SPARQL `wdt:P429` + `STRSTARTS` で 5 桁→6 桁の差を吸収）
+- [x] レート制限（バッチ間 2 秒スリープ）+ User-Agent 必須
+- [x] `public/wikidata_qid.json` 出力（292 KB、1905 件）
+- [x] 政令市の区も親市と区別して取得（鶴見区_(横浜市) 等）→ Issue #15 同時解消の見込み
+- [x] **カバレッジ 100%（1905/1905）**、緯度経度・Wikipedia タイトル欠損は 0 件、fallback 設計不要
+- [x] ブランチ: `feature/wikidata-qid-mapping`、PR 作成済
 
 ### G-4（高優先）: Wikidata SPARQL を runtime RAG に統合
 

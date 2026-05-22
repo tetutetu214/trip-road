@@ -1079,3 +1079,61 @@ Plan H 反映前の entry には `generator_model` / `judge_model` フィール�
 1. この第 10 章をてつてつがレビュー（このステップ）
 2. OK なら Plan E 実装開始（todo.md 6.1 〜 6.7 の順、TDD）
 3. 各 Phase 完了ごとにコミット + プッシュ + 進捗報告
+
+---
+
+## 12. Wikidata QID マッピング (Plan G-3 / Issue #37)
+
+### 12.1 目的
+
+1905 市町村について「5 桁の全国地方公共団体コード → Wikidata QID + 基本属性」のマッピング表を 1 回だけオフラインで生成し、`public/wikidata_qid.json` として静的配信する。Issue #38（Workers ランタイムからの SPARQL 属性取得）の同定キーとして使う。
+
+### 12.2 生成スクリプト
+
+- パス: `preprocess/build_wikidata_qid_map.py`
+- 実行例: `python3 preprocess/build_wikidata_qid_map.py` （`--batch-size 100 --timeout 90 --sleep 2.0` がデフォルト）
+- SPARQL: `wdt:P429`（全国地方公共団体コード、6 桁・チェックデジット付き）に対して `STRSTARTS(?code6, ?code5)` で前方一致。クライアント側でチェックデジット計算を持たないことで、計算ミスによる政令市区の取り違えリスクを回避
+- レート制限: User-Agent 必須、バッチ間 2 秒スリープ、5xx は 1 回リトライ
+
+### 12.3 出力ファイル
+
+- パス: `public/wikidata_qid.json`
+- サイズ: 約 292 KB、1905 エントリ
+- 構造:
+
+```json
+{
+  "13101": {
+    "qid": "Q214051",
+    "label_ja": "千代田区",
+    "lat": 35.693944444,
+    "lon": 139.753611111,
+    "wikipedia_ja": "千代田区"
+  },
+  "14101": {
+    "qid": "Q1202820",
+    "label_ja": "鶴見区",
+    "lat": 35.508333333,
+    "lon": 139.6825,
+    "wikipedia_ja": "鶴見区_(横浜市)"
+  }
+}
+```
+
+| フィールド | 型 | 用途 |
+|---|---|---|
+| `qid` | `Q` + 数字の文字列 | Issue #38 で属性取得の同定キーとして使う |
+| `label_ja` | 日本語ラベル | 表示用フォールバック |
+| `lat` / `lon` | 度、Wikidata 由来 | 地図キャプション・距離計算の参考値（小数 9 桁） |
+| `wikipedia_ja` | ja Wikipedia 記事タイトル | `workers/src/wikipedia.js` の `resolveWikipediaTitle` 第一候補として使える（特に「鶴見区_(横浜市)」のようにカッコ付きタイトル） |
+
+### 12.4 Workers からの参照
+
+- フェッチ: `https://trip-road.tetutetu214.com/wikidata_qid.json` から起動時 1 回 fetch、Cache API で 30 日 TTL
+- 未解決キー: JSON にエントリが存在しない場合は `undefined` を fallback トリガとして扱う（QID なしと QID null の二重表現を避けるため、未解決キーは省略する設計）
+
+### 12.5 再生成タイミング
+
+- 平常時は再生成不要（同定キーは年単位でしか変動しない）
+- 市町村合併や政令市区の新設があった場合のみ手動で再実行
+- 再実行時の所要時間は約 2 分 6 秒（20 バッチ × 平均 4〜6 秒 + バッチ間 2 秒スリープ）
