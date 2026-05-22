@@ -141,7 +141,7 @@ def fetch_sparql(
     endpoint: str,
     query: str,
     user_agent: str,
-    timeout: int = 60,
+    timeout: float = 60.0,
 ) -> dict:
     """WDQS に POST し、JSON レスポンスを返す。"""
     body = urllib.parse.urlencode({"query": query}).encode("utf-8")
@@ -193,8 +193,9 @@ def main() -> None:
         type=Path,
     )
     parser.add_argument("--output", default=DEFAULT_OUTPUT, type=Path)
-    parser.add_argument("--batch-size", default=500, type=int)
+    parser.add_argument("--batch-size", default=100, type=int)
     parser.add_argument("--sleep", default=2.0, type=float)
+    parser.add_argument("--timeout", default=90.0, type=float)
     parser.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
     parser.add_argument("--endpoint", default=DEFAULT_ENDPOINT)
     args = parser.parse_args()
@@ -204,7 +205,9 @@ def main() -> None:
         codes,
         args.batch_size,
         args.sleep,
-        lambda query: fetch_sparql(args.endpoint, query, args.user_agent),
+        lambda query: fetch_sparql(
+            args.endpoint, query, args.user_agent, timeout=args.timeout
+        ),
     )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
