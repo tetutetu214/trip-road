@@ -1137,3 +1137,58 @@ Plan H 反映前の entry には `generator_model` / `judge_model` フィール�
 - 平常時は再生成不要（同定キーは年単位でしか変動しない）
 - 市町村合併や政令市区の新設があった場合のみ手動で再実行
 - 再実行時の所要時間は約 2 分 6 秒（20 バッチ × 平均 4〜6 秒 + バッチ間 2 秒スリープ）
+
+---
+
+## 13. Wikidata SPARQL を runtime RAG に統合 (Plan G-4 / Issue #38)
+
+### 13.1 目的
+
+`public/wikidata_qid.json`（第 12 章）を同定キーとして使い、Workers ランタイムで Wikidata SPARQL から構造化属性を取り、Generator/Judge の in-context として併用する。Plan I Phase 2-3 で残課題だった `out_of_kb_terms` の検出（Wikipedia 抜粋外の表現を Nova が出す）を、Wikidata 属性も「in-context」として認めることで削減する。
+
+### 13.2 取得プロパティ
+
+`workers/src/wikidata.js` の `WIKIDATA_PROPS`:
+
+| ID | 表示名 | 役割 |
+|---|---|---|
+| P31 | 種別 | 「日本の特別区」「日本の市」「中核市」等の自己定義 |
+| P138 | 名前の由来 | 地名の語源 |
+| P150 | 構成地区 | 当該市町村の下位行政区分 (本牧, 元町 など)。out_of_kb_terms 削減の主役。**上限 20 件** |
+| P190 | 姉妹都市 | カルチャー要素 |
+| P206 | 隣接水域 | 海・川・湖 |
+| P706 | 位置する地形 | 関東地方, 下総台地 など |
+| P1376 | 上位行政体の中心 | 区→市、市→国 の従属関係 |
+
+### 13.3 Workers モジュール
+
+- `workers/src/wikidata.js`: SPARQL 取得 + Cache API 30 日 TTL。失敗は **null fail-open**（Wikipedia 単独 RAG にフォールバック、Plan I の合格率 100% を保つ）
+- `workers/src/qid_map.js`: `public/wikidata_qid.json` を Worker 起動時に 1 回 fetch + in-memory cache + Cache API 30 日 TTL
+
+### 13.4 リクエスト・レスポンス変更
+
+リクエスト (`/api/describe`) に `muniCode` (5 桁) を追加。古いフロントは送ってこないので Workers 側はオプショナル扱い、欠落時は Wikidata 統合をスキップして Wikipedia 単独 RAG で動作。
+
+レスポンスに `wikidata_attributes_length: number` を追加。`formatWikidataForPrompt` の出力文字長で、0 のときは「Wikidata 統合スキップ／取得失敗／属性ゼロ」のいずれか。
+
+### 13.5 Generator/Judge プロンプト拡張
+
+- Generator (`nova.js` の SYSTEM_PROMPT): 「Wikipedia 抜粋および Wikidata 構造化属性に書かれている事実だけを使う」に拡張。「構成地区」は網羅列挙禁止、代表 1〜3 個まで
+- Judge (`judge_prompts.js` の buildFaithfulnessPrompt): 採点基準を「Wikipedia 抜粋または Wikidata 構造化属性のいずれかに裏付けられているか」に拡張。out_of_kb_terms は両素材のどちらにもないものだけ
+
+### 13.6 並列取得とフォールバック
+
+`describe_flow.js` で Wikipedia と Wikidata を `Promise.all` で並列取得。
+
+- Wikipedia なし → 従来通り「記事なし」を返す（Plan I のコア原則を維持）
+- Wikipedia あり / Wikidata なし → Wikipedia 単独 RAG（Plan I と同等）
+- Wikipedia あり / Wikidata あり → 両方を context として Generator/Judge へ渡す
+
+### 13.7 観測指標
+
+主指標：**`out_of_kb_terms` の件数/件**（現状 3/10 → 目標 ≤1/10）
+
+副指標：
+- 合格率（現状 100%、これを維持）
+- `wikidata_attributes_length`（属性取得の成功率）
+- `judge_error` ／ Workers ログの fetch エラー率（WDQS の安定性）
