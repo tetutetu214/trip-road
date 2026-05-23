@@ -333,9 +333,13 @@ async function handlePosition({ lat, lon, speed, altitude }, password) {
               regenerated: result.regenerated,
               fallback_to_extract: result.fallback_to_extract,
               wikipedia_extract_length: result.wikipedia_extract_length,
+              wikidata_attributes_length: result.wikidata_attributes_length,
               judge_error: result.judge_error,
               generator_model: result.generator_model,
               judge_model: result.judge_model,
+              deterministic_score: result.deterministic_score,
+              deterministic_passed: result.deterministic_passed,
+              deterministic_out_of_kb_terms: result.deterministic_out_of_kb_terms,
             }));
             currentDisplayStartMs = Date.now();
             updateTelemetry(currentTraceId, { ts_displayed: currentDisplayStartMs });
