@@ -97,6 +97,15 @@ export function setTrack(points) {
 }
 
 /**
+ * 地図上の軌跡ポリラインを空にする。
+ * localStorage 側の track は変更しない（履歴データは温存）。
+ */
+export function clearTrack() {
+  if (!trackLine) return;
+  trackLine.setLatLngs([]);
+}
+
+/**
  * 陰影起伏図レイヤーのレベル切替（Issue #48: off / weak / strong）。
  * off ならレイヤーを map から外し、weak/strong なら opacity を切替えて add。
  */
