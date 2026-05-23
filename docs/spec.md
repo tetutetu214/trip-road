@@ -1192,3 +1192,540 @@ Plan H 反映前の entry には `generator_model` / `judge_model` フィール�
 - 合格率（現状 100%、これを維持）
 - `wikidata_attributes_length`（属性取得の成功率）
 - `judge_error` ／ Workers ログの fetch エラー率（WDQS の安定性）
+
+---
+
+## 14. 踏破履歴ビュー詳細仕様（plan.md §13 に対応）
+
+plan.md §13 で合意した「階層コロプレス + DynamoDB」を、実装で迷わないレベルまで仕様化する。
+
+### 14.1 画面遷移
+
+既存メイン画面に「履歴」ボタン（🗺️ アイコン）を追加。タップで履歴画面に遷移。
+
+```
+[メイン画面]
+   ├─ ⛰️ (陰影起伏図トグル)
+   ├─ 🗺️ (履歴ボタン)  ← 新設
+   └─ ⚙️ (デバッグトグル)
+       │
+       │ 🗺️ タップ
+       ▼
+[履歴画面 / レベル0: 日本全土]
+   ├─ ← 戻る (メイン画面へ)
+   ├─ 統計バー: 「47都道府県中 N 制覇 / 全1900市町村中 M 踏破」
+   └─ 日本地図 + 8地方ポリゴンの色塗り
+       │
+       │ 地方ポリゴンをタップ
+       ▼
+[履歴画面 / レベル1: 地方詳細]
+   ├─ ← 戻る (レベル0 へ)
+   ├─ 「関東地方」のタイトル
+   ├─ 統計バー: 「7都県中 X 制覇 / 全290市町村中 Y 踏破 (Y%)」
+   └─ 地方ズーム地図 + 都道府県ポリゴンの色塗り
+       │
+       │ 都道府県ポリゴンをタップ
+       ▼
+[履歴画面 / レベル2: 都道府県詳細]
+   ├─ ← 戻る (レベル1 へ)
+   ├─ 「神奈川県」のタイトル
+   ├─ 統計バー: 「33市町村中 Z 踏破 (Z%)」
+   └─ 都道府県ズーム地図 + 市町村ポリゴンの色塗り
+       │
+       │ 踏破済市町村をタップ
+       ▼
+[履歴画面 / レベル3: 市町村詳細]
+   ├─ ← 戻る (レベル2 へ)
+   ├─ 「神奈川県 綾瀬市」のタイトル
+   ├─ 初回訪問日 (例: 2026-04-15 14:32)
+   └─ Wikipedia 要約キャッシュがあれば表示
+```
+
+DOM 上はシングルページのまま、`display: none` 切替で画面を出し入れする（既存の `showMainScreen` / `showPasswordScreen` と同様のパターン）。
+
+### 14.2 履歴画面の DOM 構造
+
+`public/index.html` に追加する DOM スケッチ（class 名は仮）:
+
+```html
+<div id="history-screen" class="screen" style="display:none;">
+  <header class="history-header">
+    <button class="history-back" aria-label="戻る">←</button>
+    <h2 class="history-title">日本全土</h2>
+  </header>
+  <div class="history-stats">
+    <span class="stat-main">47 都道府県中 3 制覇</span>
+    <span class="stat-sub">全 1900 市町村中 25 踏破</span>
+  </div>
+  <div id="history-map" class="history-map"></div>
+  <div id="history-detail" class="history-detail" style="display:none;">
+    <!-- レベル3 用、最初は非表示 -->
+  </div>
+</div>
+```
+
+CSS は新規ファイル `public/assets/history.css` に分離（既存 `app.css` は触らない）。
+
+### 14.3 階層レベル別の地図描画
+
+既存 Leaflet 地図を再利用せず、`history-map` に専用 Leaflet インスタンスを作る（メイン地図とライフサイクルを分離して、メイン画面に戻ったときに状態が壊れないようにする）。
+
+```js
+// public/assets/history.js
+let historyMap = null;
+let currentLevel = 0;
+let currentRegion = null;
+let currentPrefecture = null;
+
+function initHistoryMap() {
+  historyMap = L.map('history-map', {
+    center: [36, 138],
+    zoom: 5,
+    zoomControl: false,
+  });
+  L.tileLayer(TILE_URL, { maxZoom: 18 }).addTo(historyMap);
+}
+
+function renderLevel0(conquests) {
+  // regions.geojson を読み、地方ごとに色塗り
+  const geojson = await fetch('/regions.geojson').then(r => r.json());
+  L.geoJSON(geojson, {
+    style: (feature) => ({
+      fillColor: colorForRate(rateFor.region(feature.properties.region_code, conquests)),
+      fillOpacity: 0.7,
+      color: '#5dcaa5',
+      weight: 1,
+    }),
+    onEachFeature: (feature, layer) => {
+      layer.on('click', () => transitionToLevel1(feature.properties.region_code));
+    },
+  }).addTo(historyMap);
+}
+```
+
+レベル1 / レベル2 も同様。レベル切替時は `historyMap.eachLayer(l => historyMap.removeLayer(l))` で既存レイヤーを掃除し、タイルレイヤーは再 add。
+
+### 14.4 踏破率の計算（純粋関数として切出）
+
+新ファイル `public/assets/conquest_rate.js`:
+
+```js
+/**
+ * 地方の踏破率を返す。
+ * @param {string} regionCode - "kanto" など
+ * @param {Map<string,object>} conquests - muni_code → {region_code, prefecture_code, ...}
+ * @param {object} regionTotals - regions.geojson properties から得る {region_code: muni_count}
+ * @returns {number} 0-1 の踏破率
+ */
+export function rateForRegion(regionCode, conquests, regionTotals) {
+  const total = regionTotals[regionCode];
+  if (!total) return 0;
+  let count = 0;
+  for (const c of conquests.values()) {
+    if (c.region_code === regionCode) count++;
+  }
+  return count / total;
+}
+
+/** 都道府県の踏破率 */
+export function rateForPrefecture(prefCode, conquests, prefTotals) { ... }
+
+/** 市町村は 0/1 だが、共通 API にするため同じ shape を返す */
+export function rateForMunicipality(muniCode, conquests) {
+  return conquests.has(muniCode) ? 1 : 0;
+}
+
+/**
+ * 0-1 の率を色階調バケットにマッピング。
+ * @returns {string} 16進カラーコード
+ */
+export function colorForRate(rate) {
+  if (rate === 0) return '#2a2a2a';
+  if (rate <= 0.10) return '#1f3a32';
+  if (rate <= 0.30) return '#2e6651';
+  if (rate <= 0.60) return '#3f9876';
+  return '#5dcaa5';
+}
+```
+
+これらはすべて副作用なしの純粋関数で、Vitest で `test/conquest_rate.test.js` を作って網羅テストする。
+
+### 14.5 DynamoDB スキーマ（実装詳細）
+
+#### テーブル定義
+
+```
+TableName: trip-road-conquests
+Region: us-east-1
+BillingMode: PAY_PER_REQUEST  (オンデマンド)
+AttributeDefinitions:
+  - AttributeName: user_id   AttributeType: S
+  - AttributeName: muni_code AttributeType: S
+KeySchema:
+  - AttributeName: user_id   KeyType: HASH    (PK)
+  - AttributeName: muni_code KeyType: RANGE   (SK)
+PointInTimeRecoverySpecification:
+  PointInTimeRecoveryEnabled: true  (誤書き戻し時の復旧用)
+```
+
+GSI（Global Secondary Index）は当面不要。1 ユーザー全件 Query で十分なため。
+
+#### アイテム例
+
+```json
+{
+  "user_id": { "S": "tetutetu" },
+  "muni_code": { "S": "14216" },
+  "first_visit": { "S": "2026-04-15T14:32:45.123Z" },
+  "prefecture_code": { "S": "14" },
+  "region_code": { "S": "kanto" },
+  "name": { "S": "綾瀬市" },
+  "prefecture": { "S": "神奈川県" },
+  "created_at": { "S": "2026-05-24T08:30:00.000Z" }
+}
+```
+
+DynamoDB の JSON 形式（属性に型タグが付くやつ）で書く。Workers から aws4fetch で REST 直叩きするためこの形式が必要。
+
+### 14.6 Workers API 詳細
+
+#### POST `/api/conquests`
+
+リクエスト:
+```http
+POST /api/conquests HTTP/1.1
+X-App-Password: <password>
+Content-Type: application/json
+
+{
+  "items": [
+    {
+      "muni_code": "14216",
+      "first_visit": "2026-04-15T14:32:45.123Z",
+      "prefecture_code": "14",
+      "region_code": "kanto",
+      "name": "綾瀬市",
+      "prefecture": "神奈川県"
+    }
+  ]
+}
+```
+
+- `items` は 1 件以上、上限 100 件（25 件ずつ BatchWriteItem で内部分割）
+- 既存レコードがあるエントリは ConditionExpression で skip
+
+レスポンス（成功）:
+```json
+{
+  "ok": true,
+  "written": 1,
+  "skipped": 0
+}
+```
+
+エラーレスポンス:
+
+| HTTP | Body |
+|---|---|
+| 401 | `{"error": "unauthorized"}` |
+| 400 | `{"error": "invalid_request", "detail": "items required"}` |
+| 500 | `{"error": "internal_error"}` |
+
+#### GET `/api/conquests`
+
+リクエスト:
+```http
+GET /api/conquests HTTP/1.1
+X-App-Password: <password>
+```
+
+レスポンス（成功）:
+```json
+{
+  "items": [
+    {
+      "muni_code": "14216",
+      "first_visit": "2026-04-15T14:32:45.123Z",
+      "prefecture_code": "14",
+      "region_code": "kanto",
+      "name": "綾瀬市",
+      "prefecture": "神奈川県",
+      "created_at": "2026-05-24T08:30:00.000Z"
+    }
+  ]
+}
+```
+
+- 全件返却。1900 件 × 200B ≒ 380KB、1 リクエストで収まる
+- LastEvaluatedKey が返ってきたら継続クエリして全件まとめる
+
+エラーレスポンスは POST と同形式。
+
+#### DynamoDB API 呼び出し（Workers 側）
+
+aws4fetch を使って SigV4 署名し、`https://dynamodb.us-east-1.amazonaws.com/` に POST する。
+
+```js
+// workers/src/dynamodb.js (新規)
+import { AwsClient } from 'aws4fetch';
+
+export function createDynamoClient(env) {
+  return new AwsClient({
+    accessKeyId: env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+    region: env.AWS_REGION,
+    service: 'dynamodb',
+  });
+}
+
+export async function batchWriteConquests(client, items) {
+  const requestItems = items.map(item => ({
+    PutRequest: {
+      Item: {
+        user_id: { S: 'tetutetu' },
+        muni_code: { S: item.muni_code },
+        first_visit: { S: item.first_visit },
+        prefecture_code: { S: item.prefecture_code },
+        region_code: { S: item.region_code },
+        name: { S: item.name },
+        prefecture: { S: item.prefecture },
+        created_at: { S: new Date().toISOString() },
+      },
+      // ConditionExpression は BatchWriteItem では使えないため、
+      // 「初回のみ書く」は個別 PutItem ループで実現する
+    },
+  }));
+
+  const res = await client.fetch('https://dynamodb.us-east-1.amazonaws.com/', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-amz-json-1.0',
+      'X-Amz-Target': 'DynamoDB_20120810.BatchWriteItem',
+    },
+    body: JSON.stringify({
+      RequestItems: { 'trip-road-conquests': requestItems },
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`DynamoDB BatchWriteItem failed: ${res.status} ${errText}`);
+  }
+  return res.json();
+}
+
+export async function queryConquests(client) {
+  const res = await client.fetch('https://dynamodb.us-east-1.amazonaws.com/', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-amz-json-1.0',
+      'X-Amz-Target': 'DynamoDB_20120810.Query',
+    },
+    body: JSON.stringify({
+      TableName: 'trip-road-conquests',
+      KeyConditionExpression: 'user_id = :uid',
+      ExpressionAttributeValues: { ':uid': { S: 'tetutetu' } },
+    }),
+  });
+  // LastEvaluatedKey 対応は省略（1900 件なら 1 ページで返る想定）
+  const data = await res.json();
+  return data.Items.map(unmarshallItem);
+}
+
+function unmarshallItem(item) {
+  return {
+    muni_code: item.muni_code.S,
+    first_visit: item.first_visit.S,
+    prefecture_code: item.prefecture_code.S,
+    region_code: item.region_code.S,
+    name: item.name.S,
+    prefecture: item.prefecture.S,
+    created_at: item.created_at.S,
+  };
+}
+```
+
+「同じ muni_code は first_visit を保持して上書きしない」は **BatchWriteItem では ConditionExpression が使えない**ため、個別 PutItem ループで `ConditionExpression: 'attribute_not_exists(user_id)'` を付けて回す方法に切り替える。条件失敗時の `ConditionalCheckFailedException` は「既存スキップ」として扱い、`written` カウンタを増やさず `skipped` を増やす。
+
+### 14.7 localStorage スキーマ拡張
+
+既存の `storage.js` で `visited` 構造を以下に拡張する（下位互換あり）:
+
+```js
+state.visited[muniCode] = {
+  name: string,
+  prefecture: string,
+  firstVisit: string,        // ISO 8601、既存
+  description: string|null,  // 既存
+
+  // 新規追加（既存データには undefined。マイグレーションで埋める）
+  prefectureCode: string,    // "14" など
+  regionCode: string,        // "kanto" など
+  synced: boolean,           // DynamoDB 反映済か（既存データは false 扱い）
+};
+```
+
+新規追加 storage.js 関数:
+- `getUnsyncedVisitedBefore(today: number): Array<...>` — 前日以前 (`!isSameLocalDay(firstVisit, today)`) で `synced !== true` のエントリを返す
+- `markVisitedSynced(muniCodes: string[]): void` — 渡された code 群の `synced = true` をセット
+- `enrichVisitedWithCodes(meta: {muni_code → {region_code, prefecture_code}}): void` — 既存 visited に prefectureCode / regionCode が欠けていれば埋める
+
+### 14.8 起動時の同期フロー
+
+```
+enterMainApp の最後 (既存処理の後):
+  1. fetch('/conquest_meta.json') で muni_code → {region_code, prefecture_code} ロード
+  2. enrichVisitedWithCodes(meta)  — 既存 visited に code を埋める
+  3. getUnsyncedVisitedBefore(Date.now()) で対象抽出
+  4. 対象 0 件なら何もしない
+  5. 対象 ≥1 件なら POST /api/conquests へ 25 件ずつ送る
+  6. 成功した code 群を markVisitedSynced で同期済マーク
+  7. 失敗時は localStorage を変更せず次回起動時に再試行
+```
+
+非同期で実行し、UI ブロックしない。エラーは console.warn のみ。
+
+### 14.9 履歴画面の読み込みフロー
+
+```
+🗺️ ボタンタップ:
+  1. showHistoryScreen()
+  2. キャッシュ確認: localStorage.conquestsCache に 60 秒以内のデータがあればそれを使う
+  3. なければ GET /api/conquests を呼ぶ
+  4. 結果を conquestsCache に保存
+  5. localStorage.visited とマージ (DynamoDB 未反映の当日分も塗りたい)
+  6. レベル0 描画
+```
+
+タイムアウト 5 秒で諦め、localStorage の visited のみで描画する（DynamoDB 未到達でも当日分は見える）。
+
+### 14.10 preprocess: regions.geojson / prefectures.geojson 生成
+
+新スクリプト `preprocess/build_regions.py`:
+
+入力: 既存 N03 ベクタ（県・市町村レベル）
+処理:
+1. 都道府県コード単位で市町村ポリゴンを `shapely.ops.unary_union` で集約 → 都道府県ポリゴン
+2. 地方コード（spec 14.11 のマッピング）単位でさらに集約 → 地方ポリゴン
+3. それぞれを tolerance を変えて簡略化 (`Polygon.simplify(tolerance)`)
+   - 地方: tolerance 0.01 度（粗くてOK、目視で見えるサイズ）
+   - 都道府県: tolerance 0.005 度
+
+出力:
+- `public/regions.geojson`: 8 features
+   ```json
+   {
+     "type": "FeatureCollection",
+     "features": [
+       {
+         "type": "Feature",
+         "geometry": {...},
+         "properties": {
+           "region_code": "kanto",
+           "name": "関東",
+           "muni_count": 290
+         }
+       }
+     ]
+   }
+   ```
+- `public/prefectures.geojson`: 47 features、properties に `prefecture_code` / `name` / `region_code` / `muni_count`
+- `public/conquest_meta.json`: `{ "14216": {"region_code": "kanto", "prefecture_code": "14"}, ... }` 全市町村分
+
+### 14.11 都道府県 → 地方コードのマッピング（実装で使う定数）
+
+```js
+// public/assets/region_mapping.js
+export const PREFECTURE_TO_REGION = {
+  '01': 'hokkaido',
+  '02': 'tohoku', '03': 'tohoku', '04': 'tohoku', '05': 'tohoku', '06': 'tohoku', '07': 'tohoku',
+  '08': 'kanto', '09': 'kanto', '10': 'kanto', '11': 'kanto', '12': 'kanto', '13': 'kanto', '14': 'kanto',
+  '15': 'chubu', '16': 'chubu', '17': 'chubu', '18': 'chubu', '19': 'chubu', '20': 'chubu', '21': 'chubu', '22': 'chubu', '23': 'chubu',
+  '24': 'kinki', '25': 'kinki', '26': 'kinki', '27': 'kinki', '28': 'kinki', '29': 'kinki', '30': 'kinki',
+  '31': 'chugoku', '32': 'chugoku', '33': 'chugoku', '34': 'chugoku', '35': 'chugoku',
+  '36': 'shikoku', '37': 'shikoku', '38': 'shikoku', '39': 'shikoku',
+  '40': 'kyushu', '41': 'kyushu', '42': 'kyushu', '43': 'kyushu', '44': 'kyushu', '45': 'kyushu', '46': 'kyushu', '47': 'kyushu',
+};
+
+export const REGION_NAMES = {
+  hokkaido: '北海道',
+  tohoku: '東北',
+  kanto: '関東',
+  chubu: '中部',
+  kinki: '近畿',
+  chugoku: '中国',
+  shikoku: '四国',
+  kyushu: '九州・沖縄',
+};
+```
+
+Workers でも同マップが必要なら `workers/src/region_mapping.js` にコピーする（小さいので重複を許容）。
+
+### 14.12 IAM ポリシー JSON（コピペ可能形式）
+
+既存 IAM ユーザー `trip-road-telemetry-writer` のインラインポリシーに以下を追加:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "TripRoadDynamoDBConquests",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:PutItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:Query"
+      ],
+      "Resource": "arn:aws:dynamodb:us-east-1:<ACCOUNT_ID>:table/trip-road-conquests"
+    }
+  ]
+}
+```
+
+ACCOUNT_ID は `aws sts get-caller-identity` で動的取得（plan.md §12 と同じ流儀）。CLI コマンドは Phase 13-0 で別途記載。
+
+### 14.13 テスト戦略
+
+#### 単体テスト（Vitest）
+
+新規ファイル:
+- `test/conquest_rate.test.js`: rateForRegion / rateForPrefecture / rateForMunicipality / colorForRate
+- `test/conquests_sync.test.js`: getUnsyncedVisitedBefore / markVisitedSynced / enrichVisitedWithCodes
+- `test/region_mapping.test.js`: PREFECTURE_TO_REGION の全 47 件カバレッジ
+
+各 8-15 件、合計 +40 件を見込む。
+
+#### 結合テスト（Workers）
+
+- `workers/test/conquests.test.js`: POST/GET ハンドラのモックテスト
+- DynamoDB クライアントは fetch モックで偽装（aws4fetch を mock）
+- ConditionalCheckFailedException ハンドリングを必ずテスト
+
+#### 実機テスト（Phase 13-6 完了判定）
+
+- [ ] 初回起動で localStorage 既存 visited が DynamoDB に転送される
+- [ ] 履歴画面を開くと地方単位の色濃度が表示される
+- [ ] 関東タップで都道府県レベルへ遷移
+- [ ] 神奈川タップで市町村レベルへ遷移、踏破済（綾瀬市など）が緑、未踏が灰
+- [ ] 綾瀬市タップで詳細（初回訪問日 + 解説）が見える
+- [ ] DevTools / curl で DynamoDB に意図したアイテムだけが書かれていることを確認
+
+### 14.14 エラーハンドリング
+
+| 発生箇所 | エラー | 動作 |
+|---|---|---|
+| 同期書込 (POST) | ネットワーク失敗 / 500 | localStorage 変更せず、次回起動でリトライ |
+| 同期書込 (POST) | 401 | パスワード期限切れと判断、メイン画面と同じく `setupPasswordScreen` を呼ぶ |
+| 履歴読込 (GET) | 5 秒タイムアウト | localStorage の visited のみで描画、画面下にトースト「サーバー応答なし、ローカル分のみ表示」 |
+| 履歴読込 (GET) | 401 | 同上 |
+| 階層 GeoJSON 読込 | 404 / パースエラー | エラーモーダル「履歴画面を準備中、もう一度お試しください」、戻るボタンのみ表示 |
+| `conquest_meta.json` 読込失敗 | 同期処理スキップ（既存 visited のままで履歴は描画可能だが、新規 visited に code が埋まらないため次回同期時に再試行） |
+
+### 14.15 不採用案の実装影響
+
+plan.md §13.14 で挙げた不採用案について、もし将来必要になった時の差分メモ:
+
+- **同じ市町村の複数回訪問記録を取りたい**: 現スキーマは SK=`muni_code` で 1 市町村 1 アイテム。日付別ログが必要になったら、別テーブル `trip-road-visits` を作って SK=`visit#YYYYMMDD#muni_code` で複数行持つ。既存テーブルは無傷で読込キャッシュとして残る
+- **複数ユーザー対応**: §13.5 で説明済。PK 値を Cognito sub に差し替える 1-shot 移行スクリプトのみで対応可
+- **書込即時化**: 履歴ビューのリアルタイム性が問われるようになったら、市町村切替時に追加で POST する。バッチ flush は維持してリトライ層として残す
