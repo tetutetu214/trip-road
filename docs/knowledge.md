@@ -1790,6 +1790,50 @@ Phase 2-2 の本実装（シャドウ運用基盤）は完了。次の方向性�
 
 ---
 
+## 4.30 軌跡描画の「今日縛り」と踏破履歴の保存先方針（2026-05-23）
+
+### 4.30.1 背景
+
+長期間の使用で localStorage `track` 配列に過去日のポイントが積み上がり、地図全面が緑線で覆われて当日の移動が判別不能になった。
+
+### 4.30.2 構造の確認
+
+- `public/assets/storage.js` の `track: [{lat, lon, ts}]` は **フロント localStorage のみ**に存在。`appendTrack` で append され、永続クリア手段がなかった。
+- `public/assets/app.js:114` で起動時に `state.track` 全件を `setTrack` していたため、過去全部の点が緑ポリラインに乗っていた。
+- **S3 テレメトリには位置点列は含まれない**。`telemetry.js:buildTelemetryEntry` のスキーマには `muni_code`/`description`/Judge 指標/暗黙シグナルしか入っていない。緯度経度は Workers にも送っていない。
+- したがって track を temp で消しても **Judge 改善ループに必要なデータは欠損しない**。観測駆動の反復は影響を受けない。
+
+### 4.30.3 採用した方針
+
+**「localStorage は全件温存・描画だけ今日に絞る」**。
+
+- `track_filter.js` を新設し、`isSameLocalDay`（ローカル暦日比較）と `filterTodayPoints`（純粋関数）を切り出した。純粋関数にしたことで Vitest 単体で 8 件カバーできる。
+- 起動時: `filterTodayPoints(state.track, Date.now())` の結果だけを `setTrack` に渡す。`state.track` 自体には触らない。
+- 走行中の日跨ぎ: モジュールスコープ `lastTrackTs` を持ち、`addTrackPoint` 直前で `isSameLocalDay(lastTrackTs, now)` が false なら `clearTrack` してから新規開始。`appendTrack` は変わらず呼び続けるので localStorage 側は追記される。
+- これにより「日付が変わった瞬間に地図がリセット、データは温存」が両立する。
+
+### 4.30.4 不採用案と理由
+
+- **起動時に track = [] にクリア**: 実装は最小だが、Safari のリロード（電池切れ復帰など旅の途中で起きやすい）で当日の軌跡まで消える。観測駆動の前提（旅の途中で再起動はあり得る）に合わない。
+- **直近 N 件で打ち切り**: ポイント数は GPS 取得頻度に依存し、てつてつの利用シーン（電車旅）では1日 1〜2 万点も普通にあり得るので、N の妥当値が決められない。日付軸で切るほうが UX の説明可能性が高い。
+- **手動クリアボタン**: 押し忘れて今と同じ状態に戻る。自動の保険として将来追加してもよいが、まずは時間軸で自動化したほうが UX が安定する。
+
+### 4.30.5 踏破履歴の保存先（今後の検討メモ）
+
+てつてつから「踏破市町村画面を作りたい、DynamoDB がよさそう」との発言。本セッションでは設計しないが、観点だけ残す。
+
+- **S3 JSON 上書き保存案の弱点**: 1 リクエスト = 全件再読込。「踏破済 100 件」が「踏破済 101 件」になるたびに全件 GET する設計はスケールしない。CloudFront/Workers Cache を挟んでも書込直後の整合性が不安定。
+- **DynamoDB が向く理由**: PK/SK で「日付別の踏破リスト」「市町村別の訪問履歴」両方の問い合わせが効率的。容量課金で月コスト数百円規模（てつてつ 1 ユーザー）で済む。Workers から SigV4 で `PutItem`/`Query` を叩く前例は本プロジェクトの S3 PUT と同じ aws4fetch ライブラリで再利用可能。
+- **設計時の論点**:
+   - PK 設計: `tetutetu#YYYY-MM-DD` か `tetutetu` + SK `visit#YYYY-MM-DD#<muni_code>` か。日付クエリと市町村クエリの頻度で決める
+   - 既存テレメトリとの関係: telemetry は「LLM 評価の生データ」、踏破履歴は「ユーザー向け集計」。テーブル分離が素直
+   - 初回ロード時のリストア: localStorage `visited` を真実とせず、DynamoDB から取得した結果を localStorage にミラーする読み戻し設計が必要
+   - 移行: 既存 localStorage の `visited` を一度だけ DynamoDB に書き戻す one-shot 移行スクリプト
+
+実装着手前に `docs/plan.md` で plan → spec → 理解度テスト → 実装の順を踏む。todo.md にタスクを追加済。
+
+---
+
 ## 5. 参考資料
 
 ### 5.1 使用データ・API

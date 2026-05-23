@@ -518,6 +518,29 @@ UI 側で「立体的な地理把握」を補強。Generator/Judge/テレメト�
 - [x] 本番反映: `bash deploy_frontend.sh`（HTTP 200 確認、2026-05-21）
 - [ ] **観測（人間タスク）**: iPhone 実機で `https://trip-road.tetutetu214.com/` を開いて (1) ⛰️ トグルで陰影起伏図 ON/OFF が動くか、(2) 標高バッジに数値が出るか、(3) CORS NG なら別 Issue で Workers 経由に格上げ
 
+## Issue: 軌跡の「今日の分だけ表示」化（2026-05-23）
+
+過去日の軌跡が緑線として地図全面に残り、当日の移動内容が判別できなくなった事象への対応。
+localStorage の `track` は触らずに描画側だけ「今日の ts」に絞ることで、将来の踏破履歴ビュー（DynamoDB 計画）でも履歴を使えるよう温存する。
+
+- [x] `public/assets/track_filter.js` 新設: `isSameLocalDay` / `filterTodayPoints`（純粋関数）
+- [x] `public/assets/map.js` に `clearTrack`（ポリラインだけ空にする）追加
+- [x] `public/assets/app.js` 起動時に `filterTodayPoints` で絞り込み、`addTrackPoint` 直前に日跨ぎ判定して `clearTrack`
+- [x] Vitest テスト追加（`test/track_filter.test.js` 8 件、合計 79 件 pass）
+- [ ] PR レビュー → マージ → `bash deploy_frontend.sh` で本番反映
+- [ ] **観測（人間タスク）**: iPhone 実機で「翌日起動したら地図が空に戻り、当日の動きだけ緑線になる」ことを確認
+
+## 踏破市町村画面 + DynamoDB 構想（要設計）
+
+「行った市町村を日付別に見られる」履歴ビューを作るための土台。位置点列を S3 にロギングしていない（テレメトリは `muni_code` 粒度のみ）ため、踏破履歴をクラウド側に持ちたいなら別データストアが必要。
+
+- [ ] `docs/plan.md` / `docs/spec.md` に「踏破履歴ビュー」セクションを起こす
+- [ ] DynamoDB vs S3 JSON の比較ノートを `docs/knowledge.md` に追記（読み出しレイテンシ、書込頻度、コスト）
+- [ ] スキーマ草案: PK=`userId`, SK=`visit#YYYY-MM-DD#<muni_code>`（日付＋市町村で 1 レコード）
+- [ ] Workers から DynamoDB に書ける IAM/SigV4 経路の設計
+- [ ] 理解度テスト（DynamoDB の課金モデル、PK/SK 設計、Workers からの SigV4 呼出）
+- [ ] 実装はこの設計が固まってから別ブランチで着手
+
 ## Issue #48: 陰影起伏図トグルを 3 段階（OFF/弱/強）に拡張（2026-05-21）
 
 Issue #46 の opacity 0.3 は控えめという実機フィードバックを受け、循環トグルで濃さを切替えられるように拡張。
