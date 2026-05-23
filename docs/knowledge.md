@@ -1611,6 +1611,75 @@ Wikipedia 単独 RAG では特別区・小規模町村など intro が薄い記�
 
 ---
 
+## 4.28 Plan G-4 / Issue #38: Wikidata SPARQL を runtime RAG に統合（2026-05-23 実装）
+
+### 4.28.1 背景
+
+Plan I Phase 2-3 で Wikipedia 抜粋本文全体取得を実装し合格率 100% を達成（4.26 章）したが、`out_of_kb_terms` が 3/10 検出されていた。例: 「本牧地区はかつてアメリカ軍に接収され」「施行時特例市」「東海道小田原宿」。これらは Wikipedia 抜粋には含まれないが、Wikidata の構造化属性（P150 構成地区 等）にはエントリが残っているケース。Wikidata を並行して in-context に乗せれば、Judge が「これも素材内」と判定して `out_of_kb_terms` から除外できる。
+
+データの変動頻度に応じた責務分離（4.27 章で確立した原則）の続編：
+- 同定キー (QID) → 事前バッチ＋静的配信（#37、4.27 章）
+- **属性 → runtime SPARQL ＋ Cache API 30 日**（本章）
+
+### 4.28.2 設計上の発見と確定事項
+
+**プローブで確定した取得プロパティ 7 個**
+
+`curl https://query.wikidata.org/sparql` で千代田区 (Q214051) / 横浜市鶴見区 (Q1202820) / 横浜市中区 (Q1141068) / 市川市 (Q209785) を実機確認し、以下のプロパティが充実度のバランスでベスト：
+
+| ID | 表示名 | 確認例 |
+|---|---|---|
+| P31 | 種別 | 「日本の特別区」「日本の市」「中核市」 |
+| P138 | 名前の由来 | 「千代田」 |
+| P150 | 構成地区 | 千代田区 58 件、横浜市中区 15 件（**本牧含む**）|
+| P190 | 姉妹都市 | 市川市 5 件（ローゼンハイム, メダン 他）|
+| P206 | 隣接水域 | 市川市「東京湾, 江戸川, 旧江戸川」|
+| P706 | 位置する地形 | 市川市「関東地方, 下総台地」|
+| P1376 | 上位行政体の中心 | 横浜市中区→横浜市、市川市→下総国 |
+
+**P150 上限 20 件**: 千代田区の P150 が 58 件あるため、context 膨張防止と Generator の網羅列挙禁止指示の両面で先頭 20 件に切り詰める。`formatWikidataForPrompt` で「(...58件中20件)」サフィックスを付けて省略を明示。
+
+**並列 fetch + null fail-open**: `describe_flow.js` で `Promise.all([wikipediaFetcher, wikidataFetcher])`。Wikidata 取得失敗時は wikidataAttributes=null として Wikipedia 単独 RAG にフォールバック。Plan I の合格率 100% を絶対に下回らない fail-open 設計。
+
+**muniCode のリクエスト追加**: Workers 側で QID を引くため、フロントが既に持つ N03_007 (5 桁) をリクエスト body に追加。古いフロントが送ってこないケースは Workers 側でオプショナル扱い、欠落時は Wikidata 統合をスキップして従来動作（後方互換維持）。
+
+### 4.28.3 ハマリポイントと対処
+
+**Codex バックグラウンド委譲は Bash 承認待ちで停滞**
+
+`run_in_background: true` で codex:codex-rescue に委譲したが、Codex CLI の `node codex-companion.mjs ...` 実行に Bash 承認が必要で、バックグラウンド agent では承認 UI が出せず詰まる。foreground で起動するか、Claude が直接書く必要がある。今回は実装ボリューム（~600 行）が手の届く範囲だったため Claude 直接実装に切り替えた。
+
+教訓：CLAUDE.md feedback_codex_delegation_protocol の「初回 foreground 承認推奨」は **同セッション内で Codex を初めて呼ぶときは必ず foreground**、と読み替えるべき。「セッション初回」ではなく「実行コンテキスト（fg/bg）初回」が正しい。memory にも追記対象。
+
+**parseDescribeRequest の戻り値変更で deepEqual テストが落ちる**
+
+`{prefecture, municipality}` → `{prefecture, municipality, muniCode: string|null}` に拡張したことで、既存テストの `toEqual(body)` が落ちた（受信側に muniCode が増えるため）。フィールド個別比較に変更して対処。
+
+### 4.28.4 観測指標と判定基準
+
+**主指標**: `out_of_kb_terms` の件数/件
+- 現状: 3/10（Plan I Phase 2-3 後、4.26.4 章）
+- 目標: ≤ 1/10
+- 計測: 本番反映後、`docs/analysis/fetch_entries.sh` で S3 テレメトリを集計
+
+**副指標**:
+- 合格率（現状 100% を維持）
+- `wikidata_attributes_length`（属性取得成功率、初回ミス時の SPARQL 安定性チェック）
+- `judge_error` ／ Workers ログの 5xx／timeout 率
+
+**ロールバック手段**:
+- Workers: Cloudflare ダッシュボードで前バージョンへ 1 クリック Rollback
+- Pages: 同様にダッシュボードで前デプロイへ Rollback
+- git revert は Workers/Pages のキャッシュとの整合が面倒なので**最終手段**
+
+### 4.28.5 残課題
+
+- **Phase 2-2 (Faithfulness Judge の決定論化)**: Plan I の Phase 2-2 候補は #38 完了後に再評価。Wikidata 統合で out_of_kb_terms が十分減るなら、形態素解析実装の必要性が下がる
+- **wikidata.test.js のリトライテストが 12 秒**: vi.useFakeTimers で 0 秒化可能。Phase 2-2 でテスト最適化と一緒にやる
+- **wikidata_qid.json の duplicate binding 警告（45206 等 9 件）**: 4.27.5 で記録。runtime SPARQL でも `FILTER NOT EXISTS { ?city wdt:P576 ?dissolved }` を入れる余地、本番観測でハルシネーション疑いが出たら検討
+
+---
+
 ## 5. 参考資料
 
 ### 5.1 使用データ・API

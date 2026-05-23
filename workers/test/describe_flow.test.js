@@ -351,3 +351,95 @@ describe('truncateExtractForFallback', () => {
     expect(result.endsWith('…')).toBe(true);
   });
 });
+
+// ---- Issue #38: Wikidata 並列取得経路 ----
+
+describe('generateAndJudge with Wikidata (#38)', () => {
+  it('muniCode あり → qidMapFetcher + wikidataFetcher が呼ばれて wikidata_attributes_length が入る', async () => {
+    let qidMapCalls = 0;
+    let wikidataCalls = 0;
+    let generatorCalledWithWikidata = false;
+    let judgerCalledWithWikidata = false;
+
+    const qidMapFetcher = async () => {
+      qidMapCalls++;
+      return { '14211': { qid: 'Q500', label_ja: '海老名市' } };
+    };
+    const wikidataFetcher = async ({ qid }) => {
+      wikidataCalls++;
+      expect(qid).toBe('Q500');
+      return {
+        instanceOf: ['日本の市'],
+        namedAfter: [],
+        capitalOf: [],
+        waterBodies: [],
+        terrainFeatures: [],
+        twinnedWith: [],
+        parts: ['本郷', '中野', '上郷'],
+        partsTotal: 3,
+      };
+    };
+    const generator = async (req) => {
+      if (req.messages[0].content[0].text.includes('Wikidata 構造化属性')) {
+        generatorCalledWithWikidata = true;
+      }
+      return { ok: true, description: SAMPLE_DESC_1 };
+    };
+    const judger = async ({ wikidataPromptBlock }) => {
+      if (typeof wikidataPromptBlock === 'string' && wikidataPromptBlock.length > 0) {
+        judgerCalledWithWikidata = true;
+      }
+      return PASSING;
+    };
+
+    const result = await generateAndJudge(
+      { ...PARSED, muniCode: '14211' },
+      ENV,
+      { generator, judger, wikipediaFetcher: EXTRACT_FETCHER, qidMapFetcher, wikidataFetcher },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(qidMapCalls).toBe(1);
+    expect(wikidataCalls).toBe(1);
+    expect(generatorCalledWithWikidata).toBe(true);
+    expect(judgerCalledWithWikidata).toBe(true);
+    expect(result.wikidata_attributes_length).toBeGreaterThan(0);
+  });
+
+  it('muniCode なし → Wikidata 経路は完全スキップ、wikidata_attributes_length=0', async () => {
+    let qidMapCalls = 0;
+    let wikidataCalls = 0;
+    const qidMapFetcher = async () => { qidMapCalls++; return {}; };
+    const wikidataFetcher = async () => { wikidataCalls++; return null; };
+    const generator = makeGenerator([{ ok: true, description: SAMPLE_DESC_1 }]);
+    const judger = makeJudger([PASSING]);
+
+    const result = await generateAndJudge(
+      PARSED, // muniCode 未指定
+      ENV,
+      { generator, judger, wikipediaFetcher: EXTRACT_FETCHER, qidMapFetcher, wikidataFetcher },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(qidMapCalls).toBe(0);
+    expect(wikidataCalls).toBe(0);
+    expect(result.wikidata_attributes_length).toBe(0);
+  });
+
+  it('Wikidata fetcher が null（取得失敗）でも Wikipedia 単独 RAG に倒れて合格', async () => {
+    const qidMapFetcher = async () => ({ '14211': { qid: 'Q500', label_ja: '海老名市' } });
+    const wikidataFetcher = async () => null; // 失敗
+    const generator = makeGenerator([{ ok: true, description: SAMPLE_DESC_1 }]);
+    const judger = makeJudger([PASSING]);
+
+    const result = await generateAndJudge(
+      { ...PARSED, muniCode: '14211' },
+      ENV,
+      { generator, judger, wikipediaFetcher: EXTRACT_FETCHER, qidMapFetcher, wikidataFetcher },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.judge_passed).toBe(true);
+    expect(result.wikidata_attributes_length).toBe(0);
+  });
+});

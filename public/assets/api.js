@@ -16,7 +16,8 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
  * 土地のたよりを取得する。
  *
  * @param {string} password - X-App-Password に送る値
- * @param {{prefecture: string, municipality: string}} req
+ * @param {{prefecture: string, municipality: string, muniCode?: string}} req
+ *   muniCode は 5 桁全国地方公共団体コード（Wikidata 統合用、Issue #38 から）
  * @param {object} [opts]
  * @param {(phase: 'judging'|'regenerating') => void} [opts.onPhaseChange]
  *   2 秒経過で 'judging'、5 秒経過で 'regenerating' を発火。

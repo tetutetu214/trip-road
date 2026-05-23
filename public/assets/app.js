@@ -276,6 +276,7 @@ async function handlePosition({ lat, lon, speed, altitude }, password) {
         {
           prefecture: muni.prefecture,
           municipality: muni.name,
+          muniCode: muni.code,
         },
         {
           onPhaseChange: (phase) => setDescriptionLoadingPhase(phase),

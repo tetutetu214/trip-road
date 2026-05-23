@@ -334,14 +334,17 @@ Issue #37。1905 市町村 × QID 表を 1 回だけオフラインで生成。�
 
 ### G-4（高優先）: Wikidata SPARQL を runtime RAG に統合
 
-Issue #38。前 Issue で生成した QID を使い Workers から runtime で属性取得。
+Issue #38。前 Issue で生成した QID を使い Workers から runtime で属性取得。2026-05-23 実装完了、本番反映+観測待ち。
 
-- [ ] `workers/src/wikidata.js` 新設（`getCachedWikidataAttributes(qid)`、Cache API 30 日 TTL）
-- [ ] `workers/src/describe_flow.js` で Wikipedia と並列に呼出
-- [ ] `workers/src/anthropic.js` の `buildMessagesRequest` に `wikidataAttributes` 引数追加
-- [ ] `workers/src/judge_prompts.js` 軸 1 を「Wikipedia または Wikidata と直接矛盾」に拡張
-- [ ] 本番反映、特別区での deductions 数の減少を観測
-- [ ] ブランチ: `feature/wikidata-sparql-rag`
+- [x] `workers/src/wikidata.js` 新設（`getCachedWikidataAttributes(qid)`、Cache API 30 日 TTL、null fail-open）
+- [x] `workers/src/qid_map.js` 新設（`public/wikidata_qid.json` を起動時 fetch + in-memory + Cache 二段）
+- [x] `workers/src/describe_flow.js` で Wikipedia と並列に呼出（`Promise.all`）
+- [x] `workers/src/nova.js`（旧 anthropic.js 相当）の `buildGeneratorRequest` に `wikidataPromptBlock` 引数追加
+- [x] `workers/src/judge_prompts.js` 軸 1 を「Wikipedia または Wikidata と直接矛盾」に拡張
+- [x] フロント (`api.js` / `app.js`) で `muniCode` をリクエストに含める
+- [x] vitest テスト 163 件 全 PASS（wikidata 28 件 + qid_map 15 件 + 既存改修分）
+- [ ] 本番反映、`out_of_kb_terms` の件数減少を観測（目標: 現状 3/10 → ≤ 1/10）
+- [x] ブランチ: `feature/wikidata-sparql-rag`
 
 ### G-5（中優先）: Judge meta-eval セット作成
 

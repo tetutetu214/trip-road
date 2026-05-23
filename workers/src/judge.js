@@ -80,6 +80,9 @@ export function parseJudgeResponse(text) {
  * - リトライも失敗 / JSON パース失敗なら {score: null} を返す
  *   （呼び出し側 judgeAll が fail-open に倒す）
  *
+ * params は {prefecture, municipality, description, wikipediaExtract,
+ *           wikidataPromptBlock} を受け付ける（最後はオプショナル、Issue #38）
+ *
  * @returns {Promise<{score: number|null, out_of_kb_terms: string[], notes: string}>}
  */
 export async function callJudge(
@@ -141,6 +144,7 @@ export async function judgeAll({
   prefecture,
   municipality,
   wikipediaExtract,
+  wikidataPromptBlock,
   env,
   judgeRunner = callJudge,
 }) {
@@ -172,7 +176,7 @@ export async function judgeAll({
 
   try {
     const result = await judgeRunner(
-      { description, prefecture, municipality, wikipediaExtract },
+      { description, prefecture, municipality, wikipediaExtract, wikidataPromptBlock },
       env,
     );
 

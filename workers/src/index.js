@@ -109,6 +109,7 @@ export default {
           regenerated: flow.regenerated,
           fallback_to_extract: flow.fallback_to_extract,
           wikipedia_extract_length: flow.wikipedia_extract_length,
+          wikidata_attributes_length: flow.wikidata_attributes_length ?? 0,
           judge_error: flow.judge_error,
           generator_model: flow.generator_model,
           judge_model: flow.judge_model,
