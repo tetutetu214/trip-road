@@ -321,6 +321,18 @@ Issue #36。Generator が引ける固有名詞の在庫を厚くする。
 - [ ] 取得長が intro 比 5 倍以上であることを確認
 - [ ] ブランチ: `feature/wikipedia-full-body`
 
+### Phase 2-2（中優先）: 決定論 Faithfulness Judge シャドウ運用 ✓ 着手 → 観測中
+
+Issue #52。2026-05-23 本実装完了、シャドウ運用開始。
+
+- [x] `workers/src/deterministic_judge.js` 新設（正規表現ベース、kuromoji 採用見送り）
+- [x] `workers/src/judge.js` / `describe_flow.js` / `index.js` でシャドウ並列実行配線
+- [x] テレメトリ拡張（`deterministic_score` / `deterministic_passed` / `deterministic_out_of_kb_terms`）
+- [x] vitest 192 件 全 PASS（新規 29 件 + 既存 163 件）
+- [x] 本番反映、curl sweep で初回観測（一致率 40%、knowledge 4.29 章）
+- [ ] 1-2 週間の本番テレメトリで一致率・誤検知パターン分布を集計
+- [ ] 次のアクション（STOPWORDS / 形態素解析 / 観測指標専用化）を判断
+
 ### G-3（高優先）: Wikidata QID マッピング表
 
 Issue #37。1905 市町村 × QID 表を 1 回だけオフラインで生成。手作業ゼロのバッチ。2026-05-22 完了。
