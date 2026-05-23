@@ -491,3 +491,272 @@ Plan G（RAG 拡張 + プロンプト緩和）のうち、
 - 反映直後（H-11 直後）に 5 件程度の実走で acc/spec/density の即時変化を確認
 - 1 週間で `fetch_entries.sh` 再集計、accuracy 平均 ≥ 3.0 を成功条件
 - 1 週間後に accuracy < 3.0 ならロールバックし、Plan G の G-2/G-3/G-4（RAG 拡張）に着手
+
+---
+
+## 13. 踏破履歴ビュー（階層コロプレス + DynamoDB）
+
+### 13.1 背景と動機
+
+「軌跡の今日縛り」対応（2026-05-23）で、過去日の点列を localStorage に温存する設計にした。
+ここから「行った市町村を後から振り返れる画面」を作る。
+プロダクト価値: 旅の蓄積を可視化することで継続使用のインセンティブを生む。データ価値: 自分の行動パターン（どの地方を埋めているか）を把握できる。
+
+### 13.2 要件サマリ（てつてつ確認済 2026-05-23）
+
+| 項目 | 決定事項 |
+|---|---|
+| 画面スタイル | コロプレス（色塗り）、**階層ズーミング** で日本全土 → 地方 → 都道府県 → 市町村 と掘り下げる |
+| 色の決め方 | そのエリアの**踏破率**（踏破市町村数 ÷ そのエリアの全市町村数）で 4-5 段階の色濃度。地方ごとの市町村数の差を吸収して公平に比較できる |
+| 過去データ移行 | localStorage の既存 `visited` を初回起動時に DynamoDB へ一括書込 |
+| ユーザー想定 | 自分 1 人専用（PK は固定値）。将来拡張余地は残すが今は最小 |
+| 書込タイミング | アプリ起動時に「前日以前の未同期」を一括 flush |
+
+### 13.3 UI 階層構造
+
+4 レベルのズーミングナビゲーション。
+
+```
+レベル0: 日本全土 / 8地方ブロックで色濃度
+   ↓ タップ
+レベル1: 選んだ地方 / その地方内の都道府県で色濃度
+   ↓ タップ
+レベル2: 選んだ都道府県 / 市町村単位で色濃度（事実上 0/1 の二色）
+   ↓ タップ
+レベル3: 選んだ市町村の詳細（初回訪問日 + Wikipedia 要約キャッシュ）
+```
+
+地方ブロックの定義（都道府県コードでマッピング）:
+
+| 地方コード | 都道府県コード | 含まれる県 |
+|---|---|---|
+| hokkaido | 01 | 北海道 |
+| tohoku | 02-07 | 青森・岩手・宮城・秋田・山形・福島 |
+| kanto | 08-14 | 茨城・栃木・群馬・埼玉・千葉・東京・神奈川 |
+| chubu | 15-23 | 新潟・富山・石川・福井・山梨・長野・岐阜・静岡・愛知 |
+| kinki | 24-30 | 三重・滋賀・京都・大阪・兵庫・奈良・和歌山 |
+| chugoku | 31-35 | 鳥取・島根・岡山・広島・山口 |
+| shikoku | 36-39 | 徳島・香川・愛媛・高知 |
+| kyushu | 40-47 | 福岡・佐賀・長崎・熊本・大分・宮崎・鹿児島・沖縄 |
+
+### 13.4 色階調の閾値（暫定、実装後に微調整）
+
+「絶対値で塗ると地方ごとの市町村数の差で不公平になる」（北海道 179、関東 290、中部 380、四国 95 など）という指摘を受け、**そのエリアの踏破率（%）で塗る**方式に統一する。すべての階層で同じ %スケールが使えるため、ユーザの感覚と一致しやすい。
+
+踏破率の計算:
+- レベル 0（地方）: その地方の踏破市町村数 ÷ その地方の全市町村数
+- レベル 1（都道府県）: その都道府県の踏破市町村数 ÷ その都道府県の全市町村数
+- レベル 2（市町村）: 行った = 100%、未踏 = 0%（事実上 0/1 の二値）
+
+色階調の閾値（全階層共通）:
+
+| 踏破率 | 状態 | 色（推奨） |
+|---|---|---|
+| 0% | 未踏 | 灰 `#2a2a2a` |
+| 1-10% | 少 | 薄緑 `#1f3a32` |
+| 11-30% | 中 | 中緑 `#2e6651` |
+| 31-60% | 多 | 濃緑 `#3f9876` |
+| 61-100% | 最多 | 最濃 `#5dcaa5` |
+
+色は既存の軌跡ポリライン（`#5dcaa5`）と同系のミントグリーン階調にして、UI 全体のトーンを統一する。実装後に Safari 実機で見て調整する余地を残す。
+
+各エリアの「全市町村数」は preprocess 段階で計算済の数（後述 `regions.geojson` / `prefectures.geojson` の属性 or 別 JSON で配布）を使う。
+
+### 13.5 データ設計（DynamoDB）
+
+**テーブル名**: `trip-road-conquests`（リージョン: 既存 S3 テレメトリと同じ `us-east-1`）
+
+**キー設計**:
+
+| 区分 | 名前 | 型 | 値 |
+|---|---|---|---|
+| PK | `user_id` | String | 固定値 `tetutetu` |
+| SK | `muni_code` | String | 6 桁の市町村コード（例: `14216` 神奈川県綾瀬市） |
+
+**属性**:
+
+| フィールド | 型 | 内容 |
+|---|---|---|
+| `first_visit` | String | ISO 8601（localStorage の visited.firstVisit を引き継ぐ） |
+| `prefecture_code` | String | 上 2 桁（例: `14`） |
+| `region_code` | String | `kanto` などの地方コード |
+| `name` | String | 市町村名（例: `綾瀬市`） |
+| `prefecture` | String | 都道府県名（例: `神奈川県`） |
+| `created_at` | String | DynamoDB 書込時刻（Workers でセット） |
+
+**設計判断**:
+- PK 固定で Hot partition は問題ない（1 ユーザー、書込頻度 ≪ 1 RCU/sec）
+- 「同じ市町村に複数回行った」は **first_visit を保持して上書きしない**（PutItem 時に `ConditionExpression: attribute_not_exists(muni_code)` で初回のみ書く）
+- 容量モード: **オンデマンド**（無料枠十分。プロビジョンドは最低料金が発生するため不利）
+
+**「PK 固定値」の意味と将来 Cognito 移行時の対応**:
+
+DynamoDB は鍵で値を引く巨大な辞書のような仕組み。PK（パーティションキー）は「どの引き出しに入れるか」を決める鍵で、同じ PK の値はすべて同じ引き出しにまとまる。
+
+今は使う人がてつてつ 1 人なので、PK の値は何でもよく、プログラムが「常にこの値を使え」と決め打ちすれば動く。本プランでは `tetutetu` という文字列を選んでいるが、`main` でも `v1` でも `default` でも動作上は等価。**「何でもいいから 1 個の固定値に決めておく」=「PK 固定値」**ということ。
+
+将来 Cognito（AWS のログイン管理サービス）を入れたとき:
+- Cognito はログインしたユーザーごとに `sub` という UUID（例: `8c4d2e1a-...`）を発行する
+- そのときは Workers の認証チェック後に取り出した `sub` を PK の値として書き込む
+- 既存レコードは PK=`tetutetu` のままだが、移行スクリプトで「`tetutetu` で書かれたレコードを、てつてつ本人の Cognito sub に書き換える」処理を 1 度だけ走らせれば移行完了
+- **テーブル構造そのものは変更不要**（PK の「値」が固定文字列から動的文字列に変わるだけ）
+
+この設計が「今は最小コストで作って、将来複数ユーザー対応が必要になったときに無理なく拡張できる」状態になる。Cognito 導入時期は未定だが、視野に入れているとてつてつから明示あり（2026-05-23）。
+
+### 13.6 API 設計（Workers）
+
+新規エンドポイント 2 つを `workers/src/index.js` に追加。
+
+**POST `/api/conquests`** — 一括書込
+
+リクエスト:
+```json
+{
+  "items": [
+    {
+      "muni_code": "14216",
+      "first_visit": "2026-05-23T11:32:45.123Z",
+      "prefecture_code": "14",
+      "region_code": "kanto",
+      "name": "綾瀬市",
+      "prefecture": "神奈川県"
+    }
+  ]
+}
+```
+
+レスポンス:
+```json
+{ "ok": true, "written": 1, "skipped": 0 }
+```
+
+実装: `BatchWriteItem` で最大 25 件まとめて書く。25 件超は内部で分割。`ConditionExpression` で初回のみ。
+
+**GET `/api/conquests`** — 全件取得
+
+レスポンス:
+```json
+{
+  "items": [
+    { "muni_code": "14216", "first_visit": "...", "region_code": "kanto", ... }
+  ]
+}
+```
+
+実装: `Query` で `PK = "tetutetu"`、全件返却（1900 件 × 200B ≒ 380KB、1 リクエストで収まる）。LastEvaluatedKey が来たら継続クエリ。
+
+両エンドポイントは既存と同じく `X-App-Password` 認証必須。
+
+### 13.7 フロント側のデータフロー
+
+**書込フロー（毎日の旅 → DynamoDB）**:
+
+1. 旅中: 既存どおり `markVisited` で `localStorage.visited[code]` に書く
+2. アプリ起動時 / 既存の `enterMainApp` 内で:
+   ```
+   const state = loadState();
+   const unsynced = Object.entries(state.visited)
+     .filter(([code, v]) => !v.synced && !isSameLocalDay(parseISO(v.firstVisit), Date.now()));
+   if (unsynced.length > 0) {
+     POST /api/conquests { items: ... }
+     → 成功したら v.synced = true を立てて保存
+   }
+   ```
+3. 当日分は `synced = false` のまま残り、翌日以降に flush される
+
+**読込フロー（履歴画面を開いたとき）**:
+
+1. 既存メイン画面に「履歴」ボタンを追加（例: フッターに 🗺️ アイコン）
+2. タップで `/history` 風のスクリーンへ遷移（SPA、画面切替）
+3. `GET /api/conquests` を呼び、結果を `localStorage.conquestsCache` に書く
+4. localStorage の `visited` とマージ（DynamoDB に未到達の当日分も画面では塗る）
+5. レベル0 から描画開始、タップで掘り下げる
+
+### 13.8 既存データの移行
+
+「これまでの localStorage 分も移す」を実現するための one-shot 処理。
+
+- 初回 `/api/conquests` POST 時に **localStorage 全件を unsynced として送信**
+- 移行スクリプト的なものは不要。アプリ初回起動時に自動で走る
+- `synced` フラグは localStorage の visited 各エントリに追加（既存に下位互換あり: undefined を false 扱い）
+
+### 13.9 地図描画方式
+
+階層レベルごとに必要なポリゴンデータ:
+
+| レベル | データソース | 既存ファイル | 追加要否 |
+|---|---|---|---|
+| 0: 地方 | 都道府県を統合した地方ポリゴン | なし | 新規生成 |
+| 1: 都道府県 | 都道府県境ポリゴン | なし | 新規生成（N03 から集約） |
+| 2: 市町村 | N03 簡略化済 | `public/municipalities/` | 既存利用 |
+| 3: 詳細 | テキストのみ | localStorage / DynamoDB | 既存利用 |
+
+`preprocess/` に Python スクリプトを追加して N03 から地方/都道府県ポリゴンを生成する。出力は `public/regions.geojson` と `public/prefectures.geojson`。
+
+ファイルサイズ目安:
+- `regions.geojson`: 8 地方分、tolerance 0.01 度で 50KB 程度
+- `prefectures.geojson`: 47 都道府県分、tolerance 0.005 度で 300KB 程度
+- 既存 `municipalities/*.geojson`: 1900 ファイル、合計 ~10MB（既にチャンク化済）
+
+レベル0/1 はファイル全部読込、レベル2 は既存どおり都道府県別 lazy load。
+
+### 13.10 IAM ポリシー追加
+
+既存 IAM ユーザー `trip-road-telemetry-writer` に DynamoDB 限定ポリシーを追加（既存の S3/Bedrock キーをそのまま流用、新規ユーザーは作らない）。
+
+```json
+{
+  "Sid": "TripRoadDynamoDBConquests",
+  "Effect": "Allow",
+  "Action": [
+    "dynamodb:PutItem",
+    "dynamodb:BatchWriteItem",
+    "dynamodb:Query"
+  ],
+  "Resource": "arn:aws:dynamodb:us-east-1:<ACCOUNT_ID>:table/trip-road-conquests"
+}
+```
+
+`GetItem` / `Scan` / `DeleteItem` は意図的に付与しない。最小権限の原則。
+
+### 13.11 コスト見積（オンデマンド、月額）
+
+| 項目 | 見積 | 月額 |
+|---|---|---|
+| ストレージ | 1900 件 × 200B ≒ 0.4MB（無料枠 25GB） | $0 |
+| 書込 | 月 1500 PutItem × $1.25 / 100万件 | $0.002 ≒ 0.3 円 |
+| 読込 | 月 30 セッション × 1 Query × 1900 件 ≒ 28.5 RRU × $0.25 / 100万 RRU | ほぼ $0 |
+| **合計** | | **月 1 円以下** |
+
+実走で書込頻度が想定 10 倍に跳ねても、月 10 円未満。コスト懸念なし。
+
+### 13.12 段階リリース計画（マイルストーン）
+
+| Phase | 内容 | 主要ファイル |
+|---|---|---|
+| 13-0 | AWS 準備（テーブル作成、IAM 拡張、wrangler secret 追加） | AWS CLI / wrangler |
+| 13-1 | preprocess で地方・都道府県 GeoJSON を生成 | `preprocess/build_regions.py`, `public/regions.geojson`, `public/prefectures.geojson` |
+| 13-2 | Workers に `/api/conquests` GET/POST を追加 | `workers/src/conquests.js`, `workers/src/index.js`, `workers/test/` |
+| 13-3 | フロントに履歴画面の DOM + CSS + JS を追加 | `public/assets/history.js`, `public/assets/history.css`, `public/index.html` |
+| 13-4 | 書込同期ロジックを `app.js` の起動シーケンスに組込み | `public/assets/app.js`, `public/assets/storage.js` |
+| 13-5 | 既存 localStorage 移行の動作確認 | 実機 / DevTools |
+| 13-6 | Workers + フロント本番反映、色階調を実機で微調整 | デプロイスクリプト |
+
+各 Phase ごとにコミット + PR を分ける（小粒度マージで観測駆動）。
+
+### 13.13 リスクと対策
+
+| リスク | 対策 |
+|---|---|
+| 階層 GeoJSON のサイズが想定超でモバイル回線で重い | tolerance を上げて再生成 / レベル別 lazy load |
+| 「初回 visit」より厳密に「日別ログ」を後から欲しくなる | 今回のスキーマだと不可能。要求が出たら別テーブル追加で対応（既存テーブルは無傷で済む設計） |
+| 移行失敗で過去履歴が DynamoDB に乗らない | localStorage 側を消さない（synced フラグだけ立てる）ので、失敗時は再試行可能 |
+| 地方境界の見た目が雑 | 自治体の飛び地・離島はレベル0/1 では表示優先度低、レベル2 で正確に出す |
+| 将来複数ユーザー対応する時の PK 変更 | 今回固定値 `tetutetu` だが Cognito ID に差し替えるだけ。レコードは初期は移行スクリプトで再作成 |
+
+### 13.14 不採用案
+
+- **S3 JSON 上書き**: 全件再読込が必要、書込直後の整合性問題。データが小さくても運用パターンが向かない
+- **localStorage のみで完結**: 端末データ消去で全消失、機種変更不可。プロダクト価値が薄れる
+- **複数ユーザー対応を最初から**: 認証実装が膨らむ。「いまのところ自分だけ」要件に対するオーバーエンジニアリング
+- **書込タイミングを「即時」**: 旅中の書込頻度が読めない、Workers / DynamoDB へのリクエスト数が増える。バッチで十分
