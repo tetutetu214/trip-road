@@ -64,6 +64,14 @@ export function buildTelemetryEntry(args) {
     generator_model: args.generator_model ?? null,
     judge_model: args.judge_model ?? null,
 
+    // Issue #38: Wikidata 構造化属性の取得結果サイズ
+    wikidata_attributes_length: args.wikidata_attributes_length ?? null,
+
+    // Issue #52 シャドウ運用: 決定論 Judge の並行結果（記録専用、本決定は judge_passed）
+    deterministic_score: args.deterministic_score ?? null,
+    deterministic_passed: args.deterministic_passed ?? null,
+    deterministic_out_of_kb_terms: args.deterministic_out_of_kb_terms ?? null,
+
     // 暗黙シグナル
     ts_displayed: null,
     ts_left: null,

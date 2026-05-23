@@ -49,6 +49,23 @@ export function formatOutOfKbTermsForFeedback(terms) {
 }
 
 /**
+ * Issue #52 シャドウ運用: judge 結果から決定論 Judge のシャドウ結果を取り出す。
+ * テレメトリ用に Nova と並行して記録する形に揃える。
+ *
+ * @param {object|null} judge - judgeAll の戻り値（null は judge を呼ばなかったケース）
+ * @returns {{deterministic_score: number|null, deterministic_out_of_kb_terms: string[],
+ *             deterministic_passed: boolean|null}}
+ */
+function shadowFields(judge) {
+  const d = judge?.deterministic;
+  return {
+    deterministic_score: d?.score ?? null,
+    deterministic_out_of_kb_terms: d?.out_of_kb_terms ?? [],
+    deterministic_passed: d?.passed ?? null,
+  };
+}
+
+/**
  * Wikipedia 抜粋を 60〜180 字に収めて返す（純粋関数、フォールバック転載用）。
  *
  * - 抜粋が FALLBACK_MIN_LENGTH 未満なら、そのまま返す
@@ -157,6 +174,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
       judge_error: null,
       generator_model: GENERATOR_MODEL,
       judge_model: JUDGE_MODEL,
+      ...shadowFields(null),
     };
   }
 
@@ -192,6 +210,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
       judge_error: null,
       generator_model: GENERATOR_MODEL,
       judge_model: JUDGE_MODEL,
+      ...shadowFields(judge1),
     };
   }
 
@@ -210,6 +229,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
       judge_error: judge1.error,
       generator_model: GENERATOR_MODEL,
       judge_model: JUDGE_MODEL,
+      ...shadowFields(judge1),
     };
   }
 
@@ -237,6 +257,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
       judge_error: null,
       generator_model: GENERATOR_MODEL,
       judge_model: JUDGE_MODEL,
+      ...shadowFields(judge1),
     };
   }
 
@@ -265,6 +286,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
       judge_error: null,
       generator_model: GENERATOR_MODEL,
       judge_model: JUDGE_MODEL,
+      ...shadowFields(judge2),
     };
   }
 
@@ -282,5 +304,6 @@ export async function generateAndJudge(parsed, env, deps = {}) {
     judge_error: judge2.error,
     generator_model: GENERATOR_MODEL,
     judge_model: JUDGE_MODEL,
+    ...shadowFields(judge2),
   };
 }

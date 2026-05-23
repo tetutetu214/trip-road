@@ -15,6 +15,7 @@
 
 import { buildFaithfulnessPrompt } from './judge_prompts.js';
 import { callConverse, NOVA_MODEL_ID } from './nova.js';
+import { deterministicJudge } from './deterministic_judge.js';
 
 // ---- 定数 ----
 
@@ -159,6 +160,7 @@ export async function judgeAll({
       score: null,
       out_of_kb_terms: [],
       error: null,
+      deterministic: null,
     };
   }
 
@@ -171,8 +173,19 @@ export async function judgeAll({
       score: null,
       out_of_kb_terms: [],
       error: 'wikipedia_extract_missing',
+      deterministic: null,
     };
   }
+
+  // Issue #52 シャドウ運用: Nova Judge と並列に決定論 Judge を実行する。
+  // 結果は記録専用、本決定は依然として Nova Judge 側。
+  const deterministicShadow = (() => {
+    try {
+      return deterministicJudge({ description, wikipediaExtract, wikidataPromptBlock });
+    } catch (_err) {
+      return null;
+    }
+  })();
 
   try {
     const result = await judgeRunner(
@@ -187,6 +200,7 @@ export async function judgeAll({
         score: null,
         out_of_kb_terms: result.out_of_kb_terms ?? [],
         error: result.notes ?? null,
+        deterministic: deterministicShadow,
       };
     }
 
@@ -196,6 +210,7 @@ export async function judgeAll({
       score: result.score,
       out_of_kb_terms: result.out_of_kb_terms,
       error: null,
+      deterministic: deterministicShadow,
     };
   } catch (err) {
     return {
@@ -204,6 +219,7 @@ export async function judgeAll({
       score: null,
       out_of_kb_terms: [],
       error: err?.message ?? String(err),
+      deterministic: deterministicShadow,
     };
   }
 }

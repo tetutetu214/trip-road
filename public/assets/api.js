@@ -82,9 +82,16 @@ export async function fetchDescription(password, req, opts = {}) {
             regenerated: data.regenerated ?? false,
             fallback_to_extract: data.fallback_to_extract ?? false,
             wikipedia_extract_length: data.wikipedia_extract_length ?? null,
+            wikidata_attributes_length: data.wikidata_attributes_length ?? null,
             judge_error: data.judge_error ?? null,
             generator_model: data.generator_model ?? null,
             judge_model: data.judge_model ?? null,
+            // Issue #52: シャドウ運用フィールド
+            deterministic_score: data.deterministic_score ?? null,
+            deterministic_passed: data.deterministic_passed ?? null,
+            deterministic_out_of_kb_terms: Array.isArray(data.deterministic_out_of_kb_terms)
+              ? data.deterministic_out_of_kb_terms
+              : [],
           };
         }
         lastError = { ok: false, status: res.status, error: 'empty_description' };
