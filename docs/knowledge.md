@@ -1846,6 +1846,40 @@ Phase 2-2 の本実装（シャドウ運用基盤）は完了。次の方向性�
 
 ---
 
+## 4.31 踏破履歴ビュー Phase 13-0 AWS リソース準備完了（2026-05-23）
+
+plan.md §13 / spec.md §14 で固めた階層コロプレス UI + DynamoDB バックエンドの基盤として、AWS 側のリソースを作成した。
+
+### 作成したもの
+
+- **DynamoDB テーブル `trip-road-conquests`**
+   - リージョン: `us-east-1`（既存 S3 / Bedrock と同居）
+   - 課金モード: PAY_PER_REQUEST（オンデマンド）
+   - キー: PK=`user_id` (S) / SK=`muni_code` (S)
+   - PITR: 有効化（誤書き戻し時の復旧用）
+   - タグ: `Project=trip-road`
+- **IAM ポリシー `TripRoadDynamoDBConquestsPolicy`**（既存ユーザー `trip-road-telemetry-writer` に attach）
+   - 許可アクション: `PutItem` / `BatchWriteItem` / `Query`
+   - Resource: テーブル ARN 限定（フル ARN は Account ID を含むため docs には書かない / `aws sts get-caller-identity` で動的取得した値を put-user-policy に渡した）
+   - 既存 2 ポリシー (`TripRoadBedrockInvokePolicy` / `TripRoadTelemetryWritePolicy`) はそのまま共存
+- **Workers Secret `DYNAMODB_CONQUESTS_TABLE`**
+   - Worker: `trip-road-api`
+   - 値: `trip-road-conquests`
+   - 既存シークレット (`APP_PASSWORD`, `AWS_*`, `S3_TELEMETRY_BUCKET`) は不変
+
+### 学び・記録
+
+- DynamoDB の作成→ACTIVE は数秒～10 秒程度（`aws dynamodb wait table-exists` で同期可能）
+- PITR は `update-continuous-backups` で別途有効化（create-table 時には設定できない）
+- `put-user-policy` でポリシー名を分けると既存インラインポリシーと共存できる（同名で叩くと上書き、別名で叩くと追加）。**1 ユーザーに最大 10 個のインラインポリシーまで** AWS 仕様
+- Workers の secret はテーブル名のような「公開しても問題ない名前」でも、運用一貫性のため既存 S3_TELEMETRY_BUCKET と同じく secret 領域に置いた（vars セクションでも動作上は等価）
+
+### 次のステップ
+
+Phase 13-1: `preprocess/build_regions.py` で GeoJSON 3 種を生成する。N03 から都道府県・地方単位でポリゴンを集約。`shapely.ops.unary_union` + `simplify(tolerance)`。出力は `public/regions.geojson` / `public/prefectures.geojson` / `public/conquest_meta.json`。
+
+---
+
 ## 5. 参考資料
 
 ### 5.1 使用データ・API

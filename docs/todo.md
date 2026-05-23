@@ -530,16 +530,28 @@ localStorage の `track` は触らずに描画側だけ「今日の ts」に絞�
 - [x] PR #54 マージ → `bash deploy_frontend.sh` で本番反映（独自ドメイン HTTP 200、2026-05-23）
 - [x] **観測（人間タスク）**: iPhone 実機で「今日の部分だけが緑線で表示される」ことを確認済（2026-05-23）
 
-## 踏破市町村画面 + DynamoDB 構想（要設計）
+## 踏破履歴ビュー（階層コロプレス + DynamoDB） — 進行中
 
-「行った市町村を日付別に見られる」履歴ビューを作るための土台。位置点列を S3 にロギングしていない（テレメトリは `muni_code` 粒度のみ）ため、踏破履歴をクラウド側に持ちたいなら別データストアが必要。
+plan.md §13 / spec.md §14 で仕様確定。階層ズーミング UI（日本全土 → 地方 → 都道府県 → 市町村）でコロプレス表示し、踏破履歴は DynamoDB に保存する。
 
-- [ ] `docs/plan.md` / `docs/spec.md` に「踏破履歴ビュー」セクションを起こす
-- [ ] DynamoDB vs S3 JSON の比較ノートを `docs/knowledge.md` に追記（読み出しレイテンシ、書込頻度、コスト）
-- [ ] スキーマ草案: PK=`userId`, SK=`visit#YYYY-MM-DD#<muni_code>`（日付＋市町村で 1 レコード）
-- [ ] Workers から DynamoDB に書ける IAM/SigV4 経路の設計
-- [ ] 理解度テスト（DynamoDB の課金モデル、PK/SK 設計、Workers からの SigV4 呼出）
-- [ ] 実装はこの設計が固まってから別ブランチで着手
+### 完了済
+
+- [x] `docs/plan.md §13` 起草（要件サマリ・UI 階層・色階調・DynamoDB スキーマ・Workers API・Phase 分け・コスト見積）
+- [x] `docs/spec.md §14` 起草（DOM 構造・aws4fetch コード擬似・テスト戦略・エラーハンドリング表）
+- [x] 着手前理解度テスト（DynamoDB 選定理由 / PK 固定値→Cognito 移行 / 同期失敗時セーフティ）3 問全問正解、knowledge.md §4.21 に記録
+- [x] **Phase 13-0: AWS リソース準備（2026-05-23）**
+   - [x] DynamoDB テーブル `trip-road-conquests` 作成（us-east-1 / オンデマンド / PITR 有効）
+   - [x] IAM ポリシー `TripRoadDynamoDBConquestsPolicy` を `trip-road-telemetry-writer` に追加（PutItem / BatchWriteItem / Query 限定）
+   - [x] Workers Secret `DYNAMODB_CONQUESTS_TABLE` 登録（値: `trip-road-conquests`）
+
+### 未着手
+
+- [ ] **Phase 13-1**: `preprocess/build_regions.py` で `public/regions.geojson` / `public/prefectures.geojson` / `public/conquest_meta.json` を生成
+- [ ] **Phase 13-2**: `workers/src/conquests.js` 新設、POST/GET `/api/conquests` ハンドラ + aws4fetch で DynamoDB 直叩き
+- [ ] **Phase 13-3**: `public/assets/history.js` / `history.css` / `region_mapping.js` / `conquest_rate.js` 新設、履歴画面 DOM 追加
+- [ ] **Phase 13-4**: `app.js` の起動シーケンスに同期 flush 組込み、`storage.js` に `synced` フラグ拡張
+- [ ] **Phase 13-5**: 既存 localStorage の自動移行を実機で確認
+- [ ] **Phase 13-6**: Workers + フロントを本番反映、色階調を実機で微調整
 
 ## Issue #48: 陰影起伏図トグルを 3 段階（OFF/弱/強）に拡張（2026-05-21）
 
