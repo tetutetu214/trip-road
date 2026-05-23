@@ -23,7 +23,8 @@ import {
 } from './storage.js';
 import { fetchDescription, sendTelemetryBatch } from './api.js';
 import { identifyMunicipality, prefetchNeighbors } from './muni.js';
-import { initMap, updateCurrentLocation, addTrackPoint, setTrack, setHillshadeLevel as applyHillshadeLayer } from './map.js';
+import { initMap, updateCurrentLocation, addTrackPoint, setTrack, clearTrack, setHillshadeLevel as applyHillshadeLayer } from './map.js';
+import { filterTodayPoints, isSameLocalDay } from './track_filter.js';
 import { startWatching } from './geo.js';
 import { fetchElevation, createElevationUpdater } from './elevation.js';
 import { generateTraceId, buildTelemetryEntry, shouldSample } from './telemetry.js';
@@ -42,6 +43,9 @@ import {
 let currentMuniCd = null;
 let isFirstFix = true;
 let elevationUpdater = null;
+// 軌跡ポリラインに最後に乗せた点のタイムスタンプ（ms）。
+// 起動時の復元と、日跨ぎ時のポリライン自動リセット判定に使う。
+let lastTrackTs = null;
 
 // Plan E (6.5b): デバッグオーバーレイの状態管理
 // currentJudgeData は最後に表示した解説の判定情報を保持し、
@@ -109,9 +113,13 @@ async function enterMainApp(password) {
   initMap('map');
   setVisitedCount(getVisitedCount());
 
-  // 既存軌跡を復元
+  // 既存軌跡を復元（今日の ts のものだけ描画。過去日分は localStorage に温存）
   const state = loadState();
-  if (state.track.length > 0) setTrack(state.track);
+  const todayPoints = filterTodayPoints(state.track, Date.now());
+  if (todayPoints.length > 0) {
+    setTrack(todayPoints);
+    lastTrackTs = todayPoints[todayPoints.length - 1].ts;
+  }
 
   // 既存の現在地情報を表示（キャッシュ済要約があれば）
   if (currentMuniCd && state.visited[currentMuniCd]) {
@@ -224,8 +232,17 @@ async function handlePosition({ lat, lon, speed, altitude }, password) {
   const wasFirstFix = isFirstFix;
   updateCurrentLocation(lat, lon, isFirstFix);
   isFirstFix = false;
+
+  // 日跨ぎが起きていたらポリラインを一旦クリアして「今日」を新規開始する。
+  // localStorage 側の track は appendTrack で従来どおり追記され続けるので、
+  // 過去日の軌跡データはそのまま温存される（将来の踏破履歴ビュー用）。
+  const nowMs = Date.now();
+  if (lastTrackTs !== null && !isSameLocalDay(lastTrackTs, nowMs)) {
+    clearTrack();
+  }
   addTrackPoint(lat, lon);
   appendTrack(lat, lon);
+  lastTrackTs = nowMs;
 
   // 市町村判定
   const muni = await identifyMunicipality(lat, lon, currentMuniCd);
