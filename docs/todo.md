@@ -527,8 +527,8 @@ localStorage の `track` は触らずに描画側だけ「今日の ts」に絞�
 - [x] `public/assets/map.js` に `clearTrack`（ポリラインだけ空にする）追加
 - [x] `public/assets/app.js` 起動時に `filterTodayPoints` で絞り込み、`addTrackPoint` 直前に日跨ぎ判定して `clearTrack`
 - [x] Vitest テスト追加（`test/track_filter.test.js` 8 件、合計 79 件 pass）
-- [ ] PR レビュー → マージ → `bash deploy_frontend.sh` で本番反映
-- [ ] **観測（人間タスク）**: iPhone 実機で「翌日起動したら地図が空に戻り、当日の動きだけ緑線になる」ことを確認
+- [x] PR #54 マージ → `bash deploy_frontend.sh` で本番反映（独自ドメイン HTTP 200、2026-05-23）
+- [x] **観測（人間タスク）**: iPhone 実機で「今日の部分だけが緑線で表示される」ことを確認済（2026-05-23）
 
 ## 踏破市町村画面 + DynamoDB 構想（要設計）
 

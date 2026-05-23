@@ -1832,6 +1832,12 @@ Phase 2-2 の本実装（シャドウ運用基盤）は完了。次の方向性�
 
 実装着手前に `docs/plan.md` で plan → spec → 理解度テスト → 実装の順を踏む。todo.md にタスクを追加済。
 
+### 4.30.6 本番観測結果（2026-05-23）
+
+`bash deploy_frontend.sh` 実行後、独自ドメイン `https://trip-road.tetutetu214.com/` で HTTP 200 を確認（pages.dev も同様）。
+てつてつが iPhone Safari で実機確認し、**「今日の部分だけが緑線で表示されている」**と報告。
+過去日の緑線で地図が埋まる事象は解消。`filterTodayPoints` + `clearTrack` の組合せが想定どおり機能している。
+
 ---
 
 ## 5. 参考資料
