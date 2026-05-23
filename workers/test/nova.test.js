@@ -13,11 +13,13 @@ import {
 // ---- 純粋関数: parseDescribeRequest ----
 
 describe('parseDescribeRequest', () => {
-  it('有効な JSON を parse', () => {
+  it('有効な JSON を parse（muniCode 未指定なら null）', () => {
     const body = { prefecture: '神奈川県', municipality: '相模原市緑区' };
     const result = parseDescribeRequest(body);
     expect(result.ok).toBe(true);
-    expect(result.value).toEqual(body);
+    expect(result.value.prefecture).toBe('神奈川県');
+    expect(result.value.municipality).toBe('相模原市緑区');
+    expect(result.value.muniCode).toBeNull();
   });
 
   it('prefecture / municipality 欠落を弾く', () => {
@@ -36,6 +38,26 @@ describe('parseDescribeRequest', () => {
   it('null / 非オブジェクトを弾く', () => {
     expect(parseDescribeRequest(null).ok).toBe(false);
     expect(parseDescribeRequest('string').ok).toBe(false);
+  });
+
+  it('#38: 有効な muniCode (5 桁) を保持', () => {
+    const result = parseDescribeRequest({
+      prefecture: '東京都', municipality: '千代田区', muniCode: '13101',
+    });
+    expect(result.ok).toBe(true);
+    expect(result.value.muniCode).toBe('13101');
+  });
+
+  it('#38: 不正な muniCode は null に丸める', () => {
+    expect(parseDescribeRequest({
+      prefecture: '東京都', municipality: '千代田区', muniCode: 'abc',
+    }).value.muniCode).toBeNull();
+    expect(parseDescribeRequest({
+      prefecture: '東京都', municipality: '千代田区', muniCode: '1234',
+    }).value.muniCode).toBeNull();
+    expect(parseDescribeRequest({
+      prefecture: '東京都', municipality: '千代田区', muniCode: 13101,
+    }).value.muniCode).toBeNull();
   });
 });
 
@@ -82,7 +104,7 @@ describe('buildGeneratorRequest', () => {
     expect(typeof req.inferenceConfig.temperature).toBe('number');
   });
 
-  it('Plan I: SYSTEM_PROMPT に「Wikipedia 抜粋を素材として要約」「抜粋にない事実を出さない」が含まれる', () => {
+  it('Plan I + #38: SYSTEM_PROMPT に Wikipedia 抜粋と Wikidata 属性両方を素材とする旨が含まれる', () => {
     const req = buildGeneratorRequest({
       prefecture: '神奈川県',
       municipality: '相模原市緑区',
@@ -91,8 +113,9 @@ describe('buildGeneratorRequest', () => {
     const sys = req.system[0].text;
     expect(sys).toContain('要約者');
     expect(sys).toContain('カーナビ');
-    expect(sys).toContain('Wikipedia 抜粋に書かれている事実だけを使う');
-    expect(sys).toContain('抜粋にない');
+    // Issue #38: Wikipedia と Wikidata 両方を素材として扱う
+    expect(sys).toContain('Wikipedia 抜粋および Wikidata 構造化属性に書かれている事実だけを使う');
+    expect(sys).toContain('構成地区');
     expect(sys).toMatch(/自己放棄|謝罪/);
     // Plan I で削除した節気関連が復活していないこと
     expect(sys).not.toContain('二十四節気');

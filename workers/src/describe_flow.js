@@ -1,26 +1,27 @@
 /**
- * /api/describe のメインフロー（Plan I / Wikipedia 要約特化）
+ * /api/describe のメインフロー（Plan I / Wikipedia 要約特化 + Issue #38 Wikidata 統合）
  *
  * 振る舞い:
- *   1. Wikipedia 抜粋を取得
- *   2. 抜粋なし → Generator を呼ばずに「記事なし」を返す（フロントで表示メッセージを出す）
- *   3. 抜粋あり → Generator で要約 → Faithfulness Judge
+ *   1. Wikipedia 抜粋 と Wikidata 構造化属性 を **並列** に取得
+ *   2. Wikipedia なし → Generator を呼ばずに「記事なし」を返す（フロントで表示）
+ *   3. Wikipedia あり → Generator で要約（Wikidata 属性があれば併用）→ Faithfulness Judge
  *   4. judge passed=true → 返す
  *   5. judge passed=false → 1 回だけ再生成 → 再 judge
  *   6. 再 judge も passed=false → Wikipedia 抜粋を切り詰めてフォールバック
  *   7. judge passed=null（fail-open） → 1 回目の生成文をそのまま返す
  *
- * Plan I の核心:
+ * Plan I + #38 の核心:
  *   - LLM の内部知識で創作させない（in-context にない情報は出さない）
+ *   - Wikidata 属性も in-context として Judge の照合対象に含める → out_of_kb_terms 削減
+ *   - Wikidata 取得失敗時は Wikipedia 単独 RAG にフォールバック（合格率 100% を保つ）
  *   - 抜粋なしの市町村に対して LLM で創作させるのは禁止
- *   - judge も passed しない生成は機械的に抜粋転載へフォールバック（ハルシネーション防止）
- *
- * 設計判断は docs/plans/2026-05-11-plan-i-wikipedia-summary-pivot.md 参照。
  */
 
 import { buildGeneratorRequest, callNovaGenerator, NOVA_MODEL_ID } from './nova.js';
 import { judgeAll, JUDGE_MODEL } from './judge.js';
 import { getCachedWikipediaExtract } from './wikipedia.js';
+import { getCachedQidMap, lookupQid } from './qid_map.js';
+import { getCachedWikidataAttributes, formatWikidataForPrompt } from './wikidata.js';
 
 const GENERATOR_MODEL = NOVA_MODEL_ID;
 
@@ -106,19 +107,39 @@ export async function generateAndJudge(parsed, env, deps = {}) {
   const judger = deps.judger ?? judgeAll;
   const fetchFn = deps.fetchFn ?? fetch;
   const wikipediaFetcher = deps.wikipediaFetcher ?? getCachedWikipediaExtract;
+  const qidMapFetcher = deps.qidMapFetcher ?? getCachedQidMap;
+  const wikidataFetcher = deps.wikidataFetcher ?? getCachedWikidataAttributes;
 
-  // 1. Wikipedia 抜粋を取得
-  let wikipediaExtract = null;
-  try {
-    wikipediaExtract = await wikipediaFetcher({
-      muniCode: parsed.municipality,
-      municipality: parsed.municipality,
-      prefecture: parsed.prefecture,
-      fetchFn,
-    });
-  } catch (_err) {
-    wikipediaExtract = null;
-  }
+  // 1. Wikipedia 抜粋 と Wikidata 属性 を並列取得
+  //    Wikidata 取得は失敗しても null として続行（合格率 100% を保つフォールバック）
+  const [wikipediaExtract, wikidataAttrs] = await Promise.all([
+    (async () => {
+      try {
+        return await wikipediaFetcher({
+          muniCode: parsed.municipality,
+          municipality: parsed.municipality,
+          prefecture: parsed.prefecture,
+          fetchFn,
+        });
+      } catch (_err) {
+        return null;
+      }
+    })(),
+    (async () => {
+      if (typeof parsed.muniCode !== 'string' || parsed.muniCode.length === 0) return null;
+      try {
+        const qidMap = await qidMapFetcher({ fetchFn });
+        const entry = lookupQid(qidMap, parsed.muniCode);
+        if (!entry) return null;
+        return await wikidataFetcher({ qid: entry.qid, fetchFn });
+      } catch (_err) {
+        return null;
+      }
+    })(),
+  ]);
+
+  const wikidataPromptBlock = formatWikidataForPrompt(wikidataAttrs);
+  const wikidataAttributesLength = wikidataPromptBlock.length;
 
   // 2. 抜粋なし → Generator を呼ばずに早期リターン（Plan I のコア原則）
   if (typeof wikipediaExtract !== 'string' || wikipediaExtract.length === 0) {
@@ -132,6 +153,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
       regenerated: false,
       fallback_to_extract: false,
       wikipedia_extract_length: 0,
+      wikidata_attributes_length: wikidataAttributesLength,
       judge_error: null,
       generator_model: GENERATOR_MODEL,
       judge_model: JUDGE_MODEL,
@@ -139,7 +161,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
   }
 
   // 3. 1 回目生成
-  const messagesReq = buildGeneratorRequest({ ...parsed, wikipediaExtract });
+  const messagesReq = buildGeneratorRequest({ ...parsed, wikipediaExtract, wikidataPromptBlock });
   const gen1 = await generator(messagesReq, env);
   if (!gen1.ok) {
     return { ok: false, status: gen1.status, detail: gen1.detail };
@@ -151,6 +173,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
     prefecture: parsed.prefecture,
     municipality: parsed.municipality,
     wikipediaExtract,
+    wikidataPromptBlock,
     env,
   });
 
@@ -165,6 +188,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
       regenerated: false,
       fallback_to_extract: false,
       wikipedia_extract_length: wikipediaExtract.length,
+      wikidata_attributes_length: wikidataAttributesLength,
       judge_error: null,
       generator_model: GENERATOR_MODEL,
       judge_model: JUDGE_MODEL,
@@ -182,6 +206,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
       regenerated: false,
       fallback_to_extract: false,
       wikipedia_extract_length: wikipediaExtract.length,
+      wikidata_attributes_length: wikidataAttributesLength,
       judge_error: judge1.error,
       generator_model: GENERATOR_MODEL,
       judge_model: JUDGE_MODEL,
@@ -193,6 +218,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
   const messagesReq2 = buildGeneratorRequest({
     ...parsed,
     wikipediaExtract,
+    wikidataPromptBlock,
     regenerationFeedback: feedback,
   });
   const gen2 = await generator(messagesReq2, env);
@@ -207,6 +233,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
       regenerated: false,
       fallback_to_extract: false,
       wikipedia_extract_length: wikipediaExtract.length,
+      wikidata_attributes_length: wikidataAttributesLength,
       judge_error: null,
       generator_model: GENERATOR_MODEL,
       judge_model: JUDGE_MODEL,
@@ -219,6 +246,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
     prefecture: parsed.prefecture,
     municipality: parsed.municipality,
     wikipediaExtract,
+    wikidataPromptBlock,
     env,
   });
 
@@ -233,6 +261,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
       regenerated: true,
       fallback_to_extract: false,
       wikipedia_extract_length: wikipediaExtract.length,
+      wikidata_attributes_length: wikidataAttributesLength,
       judge_error: null,
       generator_model: GENERATOR_MODEL,
       judge_model: JUDGE_MODEL,
@@ -249,6 +278,7 @@ export async function generateAndJudge(parsed, env, deps = {}) {
     regenerated: true,
     fallback_to_extract: true,
     wikipedia_extract_length: wikipediaExtract.length,
+    wikidata_attributes_length: wikidataAttributesLength,
     judge_error: judge2.error,
     generator_model: GENERATOR_MODEL,
     judge_model: JUDGE_MODEL,
