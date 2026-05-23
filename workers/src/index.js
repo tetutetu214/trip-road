@@ -113,6 +113,10 @@ export default {
           judge_error: flow.judge_error,
           generator_model: flow.generator_model,
           judge_model: flow.judge_model,
+          // Issue #52 シャドウ運用: 決定論 Judge の並行結果（記録専用、本決定は judge_passed）
+          deterministic_score: flow.deterministic_score ?? null,
+          deterministic_passed: flow.deterministic_passed ?? null,
+          deterministic_out_of_kb_terms: flow.deterministic_out_of_kb_terms ?? [],
         },
         200,
         allowedOrigin,
