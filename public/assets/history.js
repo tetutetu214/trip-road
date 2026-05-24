@@ -411,16 +411,16 @@ async function renderLevel2() {
     total > 0 ? `${Math.round((prefConquests.length / total) * 100)}%` : '',
   );
 
-  // 県境界を点線で薄く表示（市町村レイヤーの上から見えるように後で再 add）
+  // 県境ライン用の overlay は描画しない。
+  // 以前は点線ポリゴンを市町村レイヤーの上に被せていたが、interactive: false が
+  // Leaflet で完全には効かず、市町村タップが吸われて詳細モーダルが開かない
+  // 不具合が起きていた。市町村ポリゴンの輪郭が事実上の県境表示を兼ねる。
   if (prefFeature) {
-    const prefLayer = L.geoJSON(prefFeature, {
-      style: { color: '#9fe1cb', weight: 1.5, fillOpacity: 0, dashArray: '4,4' },
-      interactive: false,
-    });
     try {
-      // 離島を含む getBounds() ではなく、本土だけの bounds を採用
+      // 本土だけの bounds と離島含む full bounds を、map に add せずに算出する
       const main = getMainlandBounds(prefFeature);
-      const full = prefLayer.getBounds();
+      const tmpLayer = L.geoJSON(prefFeature);
+      const full = tmpLayer.getBounds();
       if (main && main.isValid()) {
         historyMap.fitBounds(main, { padding: [10, 10] });
         if (full && full.isValid()) {
@@ -433,8 +433,6 @@ async function renderLevel2() {
         historyMap.fitBounds(full, { padding: [10, 10] });
       }
     } catch (_) { /* noop */ }
-    // 県境は最後に add してトップに見せる
-    prefLayer.addTo(historyMap);
   }
 
   // 県内の全市町村を抽出（conquest_meta が真実）
