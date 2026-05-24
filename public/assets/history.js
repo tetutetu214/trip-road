@@ -39,6 +39,22 @@ let pendingRegion = null;
 let pendingPrefecture = null;
 let dataLoaded = false;
 
+/**
+ * E2E テスト（Playwright）から状態を観察するための最小公開。
+ * 本番でも読み取れるが、機微情報は含まないので副作用なし。
+ * テスト不要になったら削除可。
+ */
+function exposeForE2E() {
+  if (typeof window === 'undefined') return;
+  window.__tripRoadHistory = {
+    map: historyMap,
+    conquests,
+    level: currentLevel,
+    region: currentRegion,
+    prefecture: currentPrefecture,
+  };
+}
+
 const HISTORY_SCREEN_ID = 'history-screen';
 const HISTORY_MAP_ID = 'history-map';
 // 日本全土のおおよその bounds（北海道北端〜沖縄南端を覆う）
@@ -182,6 +198,7 @@ function initHistoryMap() {
   });
   L.tileLayer(TILE_URL, { maxZoom: 18 }).addTo(historyMap);
   setTimeout(() => historyMap.invalidateSize(), 100);
+  exposeForE2E();
 }
 
 /**
@@ -253,6 +270,7 @@ async function refreshConquests() {
   const password = getPassword();
   if (!password) {
     conquests = collectLocalConquests();
+    exposeForE2E();
     return;
   }
   const result = await getConquests(password, { timeoutMs: 5000 });
@@ -267,6 +285,7 @@ async function refreshConquests() {
     conquests = collectLocalConquests();
     console.warn('[history] /api/conquests failed, falling back to localStorage', result);
   }
+  exposeForE2E();
 }
 
 function collectLocalConquests() {
