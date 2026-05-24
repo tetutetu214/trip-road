@@ -148,14 +148,20 @@ test.describe('踏破履歴ビュー E2E', () => {
       await page.touchscreen.tap(mapBox.x + point.x, mapBox.y + point.y);
     };
 
-    // 1 タップ目: ハイライト（タイトルはまだ「日本全土」）
+    // 1 タップ目: ハイライト（pendingRegion がセットされる）
     await tapAt(kantoCenter.lat, kantoCenter.lng);
-    await page.waitForTimeout(500);
+    await expect.poll(
+      async () => await page.evaluate(() => window.__tripRoadHistory?.pendingRegion),
+      { timeout: 3000 },
+    ).toBe('kanto');
     await expect(page.locator('.history-title')).toHaveText('日本全土');
 
     // 2 タップ目: 遷移
     await tapAt(kantoCenter.lat, kantoCenter.lng);
-    await page.waitForTimeout(1500);
+    await expect.poll(
+      async () => await page.evaluate(() => window.__tripRoadHistory?.level),
+      { timeout: 5000 },
+    ).toBe(1);
     await expect(page.locator('.history-title')).toHaveText('関東');
 
     await page.screenshot({ path: 'tests/e2e/results/history-02-level1-kanto.png' });

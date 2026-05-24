@@ -376,7 +376,9 @@ function renderLevel0() {
       return styleForRate(rate, code === pendingRegion);
     },
     onEachFeature: (feature, layer) => {
-      layer.on('click', () => {
+      // Leaflet 1.9 では iOS の double-tap zoom 防止のため `tap: true` がデフォルト。
+      // `click` だけだと touch 連続タップを認識しないことがあるので `tap` も併せて listen。
+      const onTap = () => {
         const code = feature.properties.region_code;
         debugMsg(`L0 click ${code} pending=${pendingRegion}`);
         if (pendingRegion === code) {
@@ -389,7 +391,9 @@ function renderLevel0() {
           exposeForE2E();
           renderLevel0();
         }
-      });
+      };
+      layer.on('click', onTap);
+      layer.on('tap', onTap);
     },
   }).addTo(historyMap);
 
@@ -427,7 +431,7 @@ function renderLevel1() {
       return styleForRate(rate, code === pendingPrefecture);
     },
     onEachFeature: (feature, l) => {
-      l.on('click', () => {
+      const onTap = () => {
         const code = feature.properties.prefecture_code;
         debugMsg(`L1 click ${code} pending=${pendingPrefecture}`);
         if (pendingPrefecture === code) {
@@ -440,7 +444,9 @@ function renderLevel1() {
           exposeForE2E();
           renderLevel1();
         }
-      });
+      };
+      l.on('click', onTap);
+      l.on('tap', onTap);
     },
   }).addTo(historyMap);
 
@@ -462,6 +468,7 @@ function renderLevel1() {
       historyMap.fitBounds(full, { padding: [20, 20] });
     }
   } catch (_) { /* noop */ }
+  exposeForE2E();
 }
 
 // === レベル 2: 都道府県 → 市町村 ===
@@ -572,6 +579,7 @@ async function renderLevel2() {
   });
 
   setLoading(false);
+  exposeForE2E();
 }
 
 // === レベル 3: 市町村詳細モーダル ===
