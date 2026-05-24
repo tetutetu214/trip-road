@@ -125,6 +125,28 @@
   padding: 4px 8px;
 }
 
+/* 画面上のデバッグログ表示（コンソール採取が面倒なケース向け） */
+.history-debug-log {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 30;
+  max-width: 80vw;
+  max-height: 35vh;
+  overflow: hidden;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #9fe1cb;
+  border: 1px solid #2e6651;
+  border-radius: 6px;
+  font-family: ui-monospace, 'Menlo', monospace;
+  font-size: 10px;
+  line-height: 1.4;
+  pointer-events: none;
+  white-space: pre-wrap;
+}
+.history-debug-log:empty { display: none; }
+
 /* メイン画面のフッターに置いた 🗺️ ボタン */
 .history-open {
   font-size: 18px;

@@ -175,9 +175,28 @@ function initHistoryMap() {
     attributionControl: false,
     maxBounds: JAPAN_BOUNDS,
     maxBoundsViscosity: 1.0,  // 境界を超えるパンをはね返す
+    // iOS Safari の SVG タップ判定が不安定（path クリックを拾わない）問題への
+    // 対策として Canvas renderer に切り替える。Canvas はクリック判定が安定。
+    preferCanvas: true,
   });
   L.tileLayer(TILE_URL, { maxZoom: 18 }).addTo(historyMap);
   setTimeout(() => historyMap.invalidateSize(), 100);
+}
+
+/**
+ * 画面上にデバッグメッセージを表示する。iOS Safari のコンソールを
+ * 見に行かなくても挙動を観察できるように。本修正が確認できたら削除する。
+ */
+function debugMsg(msg) {
+  console.log('[history]', msg);
+  const el = document.getElementById('history-debug-log');
+  if (!el) return;
+  const time = new Date().toTimeString().slice(0, 8);
+  const line = document.createElement('div');
+  line.textContent = `${time} ${msg}`;
+  el.appendChild(line);
+  // 直近 8 行のみ保持
+  while (el.childElementCount > 8) el.removeChild(el.firstChild);
 }
 
 async function loadHistoryData() {
@@ -406,12 +425,7 @@ async function renderLevel2() {
 
   const prefConquests = conquests.filter(c => c.prefecture_code === currentPrefecture);
   const total = prefTotals[currentPrefecture] ?? 0;
-  console.log('[history] renderLevel2', {
-    prefCode: currentPrefecture,
-    prefName,
-    conqueredCount: prefConquests.length,
-    conqueredCodes: prefConquests.map(c => c.muni_code),
-  });
+  debugMsg(`L2 ${prefName} 踏破=${prefConquests.length}`);
   setStats(
     `${prefName} の踏破: ${prefConquests.length} / ${total}`,
     total > 0 ? `${Math.round((prefConquests.length / total) * 100)}%` : '',
@@ -487,7 +501,7 @@ async function renderLevel2() {
       style: { fillColor: '#5dcaa5', fillOpacity: 0.75, color: '#9fe1cb', weight: 1 },
       onEachFeature: (_f, layer) => {
         layer.on('click', (e) => {
-          console.log('[history] muni clicked', item.muniCode, conquest);
+          debugMsg(`tap ${item.muniCode} ${conquest?.name ?? '?'}`);
           L.DomEvent.stopPropagation(e);
           currentLevel = 3;
           renderLevel3(conquest);
@@ -497,13 +511,12 @@ async function renderLevel2() {
     geoLayer.addTo(historyMap);
     conqueredAdded++;
   }
-  console.log('[history] level2 add finished. conqueredAdded =', conqueredAdded);
+  debugMsg(`L2 緑 add=${conqueredAdded}`);
 
-  // 念のため: map レベルのクリックでも、その位置の踏破済を判定して開く
-  // （個別 path のクリックハンドラがなぜか効かないケースのフォールバック）
+  // 念のため: map レベル click（path クリックが効かない場合の検知）
   historyMap.off('click.historyDebug');
   historyMap.on('click.historyDebug', (e) => {
-    console.log('[history] map clicked at', e.latlng);
+    debugMsg(`map tap ${e.latlng.lat.toFixed(3)},${e.latlng.lng.toFixed(3)}`);
   });
 
   setLoading(false);
@@ -512,10 +525,10 @@ async function renderLevel2() {
 // === レベル 3: 市町村詳細モーダル ===
 
 function renderLevel3(item) {
-  console.log('[history] renderLevel3 called with', item);
+  debugMsg(`L3 ${item?.name ?? '?'}`);
   const detail = document.getElementById('history-detail');
   if (!detail) {
-    console.warn('[history] #history-detail not found');
+    debugMsg('ERR #history-detail なし');
     return;
   }
   const date = new Date(item.first_visit);
