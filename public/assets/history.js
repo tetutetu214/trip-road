@@ -194,9 +194,12 @@ function initHistoryMap() {
     attributionControl: false,
     maxBounds: JAPAN_BOUNDS,
     maxBoundsViscosity: 1.0,  // 境界を超えるパンをはね返す
-    // iOS Safari の SVG タップ判定が不安定（path クリックを拾わない）問題への
-    // 対策として Canvas renderer に切り替える。Canvas はクリック判定が安定。
-    preferCanvas: true,
+    // preferCanvas は採用しない。当初 iOS の SVG タップ問題対策として有効化したが、
+    // E2E 検証で Canvas renderer + 動的 fitBounds の組合せで L1 の hit testing が
+    // 壊れることを確認した（L0 は動くが L1 で polygon タップが拾われない）。
+    // SVG renderer の方が安定する。iOS 実機の SVG タップ問題は、当時の真因が
+    // 「点線オーバーレイの interactive: false 伝播不全」だったので、それを
+    // 廃止済の現状では SVG でも問題なくタップが届く。
   });
   L.tileLayer(TILE_URL, { maxZoom: 18 }).addTo(historyMap);
   setTimeout(() => historyMap.invalidateSize(), 100);
