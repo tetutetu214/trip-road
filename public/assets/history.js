@@ -207,46 +207,11 @@ function initHistoryMap() {
 }
 
 /**
- * 画面上にデバッグメッセージを表示する。iOS Safari のコンソールを
- * 見に行かなくても挙動を観察できるように。
- *
- * HTML / CSS のキャッシュに依存しないよう、要素が無ければ JS で動的に
- * 生成する。これで iPhone が古い index.html を握っていても確実に表示される。
- * 本修正が確認できたら別 PR で全削除する。
+ * 内部状態を console.log にだけ出す軽量ログ。E2E が console を拾えるので
+ * これで十分。実機からの画面確認は不要になった（E2E が動作を保証する）。
  */
 function debugMsg(msg) {
   console.log('[history]', msg);
-  let el = document.getElementById('history-debug-log');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'history-debug-log';
-    Object.assign(el.style, {
-      position: 'fixed',
-      // 画面上部のヘッダ・stats の直下に貼る（確実に視認できる位置）
-      top: '88px',
-      left: '8px',
-      right: '8px',
-      zIndex: '99999',
-      maxHeight: '30vh',
-      overflow: 'auto',
-      padding: '6px 8px',
-      background: 'rgba(0,0,0,0.92)',
-      color: '#9fe1cb',
-      border: '1px solid #2e6651',
-      borderRadius: '6px',
-      fontFamily: 'ui-monospace, Menlo, monospace',
-      fontSize: '11px',
-      lineHeight: '1.45',
-      pointerEvents: 'none',
-      whiteSpace: 'pre-wrap',
-    });
-    document.body.appendChild(el);
-  }
-  const time = new Date().toTimeString().slice(0, 8);
-  const line = document.createElement('div');
-  line.textContent = `${time} ${msg}`;
-  el.appendChild(line);
-  while (el.childElementCount > 10) el.removeChild(el.firstChild);
 }
 
 async function loadHistoryData() {

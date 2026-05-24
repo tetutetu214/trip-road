@@ -145,16 +145,18 @@ test.describe('踏破履歴ビュー E2E', () => {
     console.log('console errors:', consoleErrors);
   });
 
-  test('履歴画面オープン: 🗺️ で開き、デバッグログにオープンが記録される', async ({ page }) => {
+  test('履歴画面オープン: 🗺️ で開き「日本全土」タイトルが出る', async ({ page }) => {
+    const consoleMessages = [];
+    page.on('console', (msg) => {
+      if (msg.text().includes('[history]')) consoleMessages.push(msg.text());
+    });
+
     await enterHistoryScreen(page);
-
-    // debugMsg で「history open」が表示される
-    const debugLog = page.locator('#history-debug-log');
-    await expect(debugLog).toBeVisible({ timeout: 5000 });
-    await expect(debugLog).toContainText('history open');
-
-    // タイトルが「日本全土」
     await expect(page.locator('.history-title')).toHaveText('日本全土');
+
+    // console に [history] history open が出ていることも確認
+    await expect.poll(() => consoleMessages.find(m => m.includes('history open')) || null)
+      .not.toBeNull();
 
     await page.screenshot({ path: 'tests/e2e/results/history-01-level0.png' });
   });
