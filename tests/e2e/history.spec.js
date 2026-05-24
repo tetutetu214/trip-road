@@ -33,6 +33,83 @@ async function enterHistoryScreen(page) {
 }
 
 test.describe('踏破履歴ビュー E2E', () => {
+  test('diag: 関東タップ前後の内部状態と Canvas hit testing の検証', async ({ page }) => {
+    const consoleErrors = [];
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') consoleErrors.push(msg.text());
+      if (msg.text().includes('[history]')) console.log('  >', msg.text());
+    });
+
+    await enterHistoryScreen(page);
+    await page.waitForTimeout(2500); // データロード待ち
+
+    const before = await page.evaluate(() => ({
+      level: window.__tripRoadHistory?.level,
+      region: window.__tripRoadHistory?.region,
+      pendingRegion: window.__tripRoadHistory?.pendingRegion,
+      conquestsCount: window.__tripRoadHistory?.conquests?.length,
+    }));
+    console.log('BEFORE tap:', before);
+
+    // タップ位置のピクセル座標と、その位置の HTML 要素を確認
+    const tapInfo = await page.evaluate(({ lat, lng }) => {
+      const map = window.__tripRoadHistory?.map;
+      if (!map) return { error: 'no map' };
+      const point = map.latLngToContainerPoint([lat, lng]);
+      const mapEl = document.getElementById('history-map');
+      const rect = mapEl.getBoundingClientRect();
+      const pageX = rect.left + point.x;
+      const pageY = rect.top + point.y;
+      const elem = document.elementFromPoint(pageX, pageY);
+      return {
+        latLng: [lat, lng],
+        mapPoint: { x: point.x, y: point.y },
+        pageXY: { x: pageX, y: pageY },
+        elemTag: elem?.tagName,
+        elemClass: elem?.className,
+      };
+    }, { lat: 36.2, lng: 139.5 });
+    console.log('TAP TARGET:', tapInfo);
+
+    // 実タップ（touchscreen）
+    await page.touchscreen.tap(tapInfo.pageXY.x, tapInfo.pageXY.y);
+    await page.waitForTimeout(800);
+
+    const after = await page.evaluate(() => ({
+      level: window.__tripRoadHistory?.level,
+      region: window.__tripRoadHistory?.region,
+      pendingRegion: window.__tripRoadHistory?.pendingRegion,
+    }));
+    console.log('AFTER tap (touchscreen):', after);
+
+    // touchscreen で何も変わっていなければ、map.fire('click') で内部発火を試す
+    if (after.pendingRegion === before.pendingRegion && after.level === before.level) {
+      console.log('  touchscreen.tap did NOT trigger Leaflet click. Trying map.fire("click")...');
+      await page.evaluate(({ lat, lng }) => {
+        const map = window.__tripRoadHistory?.map;
+        map.fire('click', { latlng: L.latLng(lat, lng), containerPoint: map.latLngToContainerPoint([lat, lng]) });
+      }, { lat: 36.2, lng: 139.5 });
+      await page.waitForTimeout(500);
+      const after2 = await page.evaluate(() => ({
+        level: window.__tripRoadHistory?.level,
+        region: window.__tripRoadHistory?.region,
+        pendingRegion: window.__tripRoadHistory?.pendingRegion,
+      }));
+      console.log('AFTER map.fire("click"):', after2);
+    }
+
+    // mouse.click も試す
+    await page.evaluate(() => { window.__tripRoadHistory.pendingRegion = null; });
+    await page.mouse.click(tapInfo.pageXY.x, tapInfo.pageXY.y);
+    await page.waitForTimeout(500);
+    const afterMouse = await page.evaluate(() => ({
+      pendingRegion: window.__tripRoadHistory?.pendingRegion,
+    }));
+    console.log('AFTER mouse.click:', afterMouse);
+
+    console.log('console errors:', consoleErrors);
+  });
+
   test('履歴画面オープン: 🗺️ で開き、デバッグログにオープンが記録される', async ({ page }) => {
     await enterHistoryScreen(page);
 

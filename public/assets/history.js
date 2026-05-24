@@ -52,6 +52,8 @@ function exposeForE2E() {
     level: currentLevel,
     region: currentRegion,
     prefecture: currentPrefecture,
+    pendingRegion,
+    pendingPrefecture,
   };
 }
 
@@ -376,15 +378,15 @@ function renderLevel0() {
     onEachFeature: (feature, layer) => {
       layer.on('click', () => {
         const code = feature.properties.region_code;
+        debugMsg(`L0 click ${code} pending=${pendingRegion}`);
         if (pendingRegion === code) {
-          // 2 タップ目: 遷移
           currentRegion = code;
           currentLevel = 1;
           pendingRegion = null;
           renderLevel1();
         } else {
-          // 1 タップ目: ハイライト
           pendingRegion = code;
+          exposeForE2E();
           renderLevel0();
         }
       });
@@ -393,6 +395,7 @@ function renderLevel0() {
 
   historyMap.setMaxBounds(JAPAN_BOUNDS);
   historyMap.setView([36, 138], 5);
+  exposeForE2E();
 }
 
 // === レベル 1: 地方 → 都道府県 ===
@@ -426,6 +429,7 @@ function renderLevel1() {
     onEachFeature: (feature, l) => {
       l.on('click', () => {
         const code = feature.properties.prefecture_code;
+        debugMsg(`L1 click ${code} pending=${pendingPrefecture}`);
         if (pendingPrefecture === code) {
           currentPrefecture = code;
           currentLevel = 2;
@@ -433,6 +437,7 @@ function renderLevel1() {
           renderLevel2();
         } else {
           pendingPrefecture = code;
+          exposeForE2E();
           renderLevel1();
         }
       });
