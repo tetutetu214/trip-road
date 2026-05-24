@@ -17,6 +17,7 @@
       crossorigin=""/>
 
 <link rel="stylesheet" href="/assets/app.css">
+<link rel="stylesheet" href="/assets/history.css">
 </head>
 <body>
 
@@ -90,12 +91,29 @@
       </div>
       <a href="#" id="debug-toggle" class="debug-toggle" title="判定情報の表示">⚙️</a>
       <a href="#" id="hillshade-toggle" class="hillshade-toggle" title="陰影起伏図の表示" aria-pressed="false">⛰️</a>
+      <a href="#" id="history-open" class="history-open" title="踏破履歴">🗺️</a>
       <div class="gps-status" id="gps-status">
         <span class="dot dot-inactive" id="gps-dot"></span>
         <span id="gps-text">GPS 測位中</span>
       </div>
     </div>
   </div>
+</section>
+
+<!-- 踏破履歴画面（Phase 13） -->
+<section id="history-screen" class="screen hidden">
+  <header class="history-header">
+    <button type="button" class="history-back" aria-label="戻る">←</button>
+    <h2 class="history-title">日本全土</h2>
+  </header>
+  <div class="history-stats">
+    <span class="stat-main">読み込み中...</span>
+    <span class="stat-sub"></span>
+  </div>
+  <div id="history-map" class="history-map"></div>
+  <div class="history-loading" style="display:none;">読み込み中…</div>
+  <div class="history-error" style="display:none;"></div>
+  <div id="history-detail" class="history-detail" style="display:none;"></div>
 </section>
 
 <!-- Leaflet JS (CDN) -->

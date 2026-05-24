@@ -1,0 +1,136 @@
+/* 踏破履歴ビュー（Phase 13）のスタイル。
+   ダークテーマ、iPhone Safari 縦表示前提。 */
+
+#history-screen {
+  position: fixed;
+  inset: 0;
+  background: #0f0f10;
+  color: #e6e6ea;
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  padding: 12px 14px;
+  gap: 12px;
+  border-bottom: 1px solid #1f1f23;
+}
+
+.history-back {
+  background: transparent;
+  color: #9fe1cb;
+  border: 1px solid #2e6651;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 16px;
+  cursor: pointer;
+  min-width: 38px;
+}
+
+.history-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.history-stats {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #16161a;
+  font-size: 12px;
+}
+.history-stats .stat-main {
+  color: #9fe1cb;
+  font-weight: 600;
+}
+.history-stats .stat-sub {
+  color: #8a8a92;
+}
+
+.history-map {
+  flex: 1;
+  background: #0a0a0c;
+}
+
+.history-loading,
+.history-error {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(15, 15, 16, 0.92);
+  padding: 12px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #e6e6ea;
+  border: 1px solid #2e6651;
+  pointer-events: none;
+  z-index: 5;
+}
+.history-error {
+  border-color: #b14545;
+}
+
+.history-detail {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 20;
+}
+.detail-card {
+  background: #16161a;
+  border: 1px solid #2e6651;
+  border-radius: 12px;
+  padding: 18px 18px 22px;
+  width: min(86vw, 360px);
+  position: relative;
+}
+.detail-card h3 {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  color: #9fe1cb;
+}
+.detail-date {
+  margin: 6px 0;
+  font-size: 12px;
+  color: #8a8a92;
+}
+.detail-desc {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #e6e6ea;
+  white-space: pre-wrap;
+}
+.detail-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: transparent;
+  color: #8a8a92;
+  border: none;
+  font-size: 22px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px 8px;
+}
+
+/* メイン画面のフッターに置いた 🗺️ ボタン */
+.history-open {
+  font-size: 18px;
+  text-decoration: none;
+  color: #8a8a92;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.history-open:active {
+  background: rgba(159, 225, 203, 0.15);
+}

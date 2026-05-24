@@ -20,8 +20,13 @@ import {
   clearTelemetryBatch,
   getHillshadeLevel,
   setHillshadeLevel as persistHillshadeLevel,
+  enrichVisitedWithCodes,
+  getUnsyncedVisitedBefore,
+  markVisitedSynced,
 } from './storage.js';
-import { fetchDescription, sendTelemetryBatch } from './api.js';
+import { fetchDescription, sendTelemetryBatch, postConquests } from './api.js';
+import { setupHistoryScreen, openHistoryScreen } from './history.js';
+import { DATA_BASE_URL } from './config.js';
 import { identifyMunicipality, prefetchNeighbors } from './muni.js';
 import { initMap, updateCurrentLocation, addTrackPoint, setTrack, clearTrack, setHillshadeLevel as applyHillshadeLayer } from './map.js';
 import { filterTodayPoints, isSameLocalDay } from './track_filter.js';
@@ -190,6 +195,58 @@ async function enterMainApp(password) {
       tryFlushTelemetry(password);
     }
   }, TELEMETRY_FLUSH_INTERVAL_MS);
+
+  // 踏破履歴画面（Phase 13）: 🗺️ ボタンで開く + 起動時に未同期分を flush
+  setupHistoryScreen();
+  const historyBtn = document.getElementById('history-open');
+  if (historyBtn) {
+    historyBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      openHistoryScreen();
+    });
+  }
+  // バックグラウンドで前日以前の visited を DynamoDB に flush
+  tryFlushConquests(password);
+}
+
+// === 踏破履歴: 前日以前の未同期 visited を DynamoDB へ flush ===
+// Phase 13-4 / spec.md §14.8。失敗は遅延扱い、次回起動でリトライ。
+async function tryFlushConquests(password) {
+  try {
+    // 1. conquest_meta.json を取得して既存 visited に code を埋める
+    const metaRes = await fetch(`${DATA_BASE_URL}/conquest_meta.json`);
+    if (!metaRes.ok) return;
+    const meta = await metaRes.json();
+    enrichVisitedWithCodes(meta);
+
+    // 2. 前日以前の未同期エントリを抽出
+    const unsynced = getUnsyncedVisitedBefore(Date.now());
+    if (unsynced.length === 0) return;
+
+    // 3. 25 件ずつ POST して synced=true マーク
+    const CHUNK = 25;
+    for (let i = 0; i < unsynced.length; i += CHUNK) {
+      const chunk = unsynced.slice(i, i + CHUNK);
+      const payload = chunk.map(u => ({
+        muni_code: u.muni_code,
+        first_visit: u.firstVisit,
+        prefecture_code: u.prefectureCode,
+        region_code: u.regionCode,
+        name: u.name,
+        prefecture: u.prefecture,
+      }));
+      const result = await postConquests(password, payload);
+      if (result.ok) {
+        markVisitedSynced(chunk.map(u => u.muni_code));
+        console.log(`[conquests] flushed ${chunk.length} (written=${result.written}, skipped=${result.skipped})`);
+      } else {
+        console.warn('[conquests] flush failed', result);
+        break;
+      }
+    }
+  } catch (e) {
+    console.warn('[conquests] flush error', e);
+  }
 }
 
 // === テレメトリ自動 flush 本体 ===

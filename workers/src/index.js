@@ -3,6 +3,7 @@ import { corsHeaders, handlePreflight } from './cors.js';
 import { parseDescribeRequest } from './nova.js';
 import { generateAndJudge } from './describe_flow.js';
 import { putToS3, generateS3Key } from './aws.js';
+import { handleConquestsPost, handleConquestsGet } from './conquests.js';
 
 /**
  * レスポンスを JSON 形式で組み立てる（CORS ヘッダ付き）。
@@ -123,7 +124,49 @@ export default {
       );
     }
 
-    // 4. それ以外は 404
+    // 4. /api/conquests: 踏破履歴の書込・取得（DynamoDB）
+    if (url.pathname === '/api/conquests') {
+      const auth = await authenticate(request, env, allowedOrigin);
+      if (!auth.ok) return auth.response;
+
+      if (request.method === 'POST') {
+        let body;
+        try {
+          body = await request.json();
+        } catch (e) {
+          return jsonResponse({ error: 'bad_request', detail: 'invalid JSON' }, 400, allowedOrigin);
+        }
+        const result = await handleConquestsPost(body, env);
+        if (!result.ok) {
+          return jsonResponse(
+            { error: result.error, detail: result.detail },
+            result.status,
+            allowedOrigin,
+          );
+        }
+        return jsonResponse(
+          { ok: true, written: result.written, skipped: result.skipped, errors: result.errors },
+          200,
+          allowedOrigin,
+        );
+      }
+
+      if (request.method === 'GET') {
+        const result = await handleConquestsGet(env);
+        if (!result.ok) {
+          return jsonResponse(
+            { error: result.error, detail: result.detail },
+            result.status,
+            allowedOrigin,
+          );
+        }
+        return jsonResponse({ items: result.items }, 200, allowedOrigin);
+      }
+
+      return jsonResponse({ error: 'method_not_allowed' }, 405, allowedOrigin);
+    }
+
+    // 5. それ以外は 404
     return jsonResponse({ error: 'not_found' }, 404, allowedOrigin);
   },
 };

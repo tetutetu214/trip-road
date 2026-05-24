@@ -1267,6 +1267,12 @@ LLM 自動生成を保ったまま品質を上げる。手作業による解説�
 - **PK 固定値 → Cognito sub への移行の 3 ステップ**: ①Cognito ユーザープール作成、②既存テーブルレコードの PK を 1-shot スクリプトで Cognito sub に書き換え、③ Workers の認証層をパスワード検証から Cognito トークン検証に差替え。テーブル構造（PK 名 `user_id` / SK 名 `muni_code` / アイテム属性）はすべて不変。「テーブル作り直し」「データ全消去」「RDB 移行」が不要なのが、PK 固定文字列という選択の利点
 - **同期失敗は遅延、ロストではない**: アプリ起動時の DynamoDB 書込が失敗しても、localStorage 側で `synced=false` のまま残し、次回起動時に再試行する設計。「失敗 = 人生の思い出が消える」設計ではなく、「失敗 = いずれ反映されるまでの時差が増えるだけ」のセーフティネット。UI ブロックもしない（バックグラウンド処理）
 
+### 2026-05-24 踏破履歴ビュー PR 直前テスト
+
+- **PR の変更を 3 要素で語れる**: 「データ保存先（DynamoDB）」「UI（階層コロプレス画面）」「同期動作（起動時自動 flush）」の 3 つを 1 行で説明できると、PR レビュー者やリリースノートに直接転用できる。trip-road の過去 PR でも「機能名 + どのレイヤを触ったか」が伝わる説明が PR タイトル/概要で重視される
+- **「バッチ書込 vs 即書込」のトレードオフ**: 即書込は実装シンプルだがリクエスト頻度が予測不能。電車旅で市町村を連続跨ぐとリクエスト集中。バッチは「1 日 1 回・前日以前のみ」と境界がはっきりするため、Workers / DynamoDB の負荷が予測可能で、コスト試算もしやすい。trip-road は「リアルタイム性は不要」だったのでバッチが妥当
+- **「仮定で進めると転ぶ」反省**: build_regions.py で 3 つの落とし穴（N03_007 桁数の仮定、preserve_topology の効果の仮定、background timeout の仮定）を立て続けに踏んだ。共通テーマは「入力データの実形式やツールのデフォルト挙動を、ドキュメント・経験則で**推測したまま実装に進む**と、後段で時間ロスする」。最初に 1 件サンプルを print / `head` で目視するのが最も安い検証
+
 ---
 
 ## 4.22 Plan H 起案と AWS ベストプラクティス調査（2026-05-08）
@@ -1877,6 +1883,56 @@ plan.md §13 / spec.md §14 で固めた階層コロプレス UI + DynamoDB バ�
 ### 次のステップ
 
 Phase 13-1: `preprocess/build_regions.py` で GeoJSON 3 種を生成する。N03 から都道府県・地方単位でポリゴンを集約。`shapely.ops.unary_union` + `simplify(tolerance)`。出力は `public/regions.geojson` / `public/prefectures.geojson` / `public/conquest_meta.json`。
+
+---
+
+## 4.32 踏破履歴ビュー Phase 13-1 〜 13-4 実装ログ（2026-05-24）
+
+### 4.32.1 Phase 13-1（preprocess: GeoJSON 3 種生成）
+
+#### 落とし穴 1: N03_007 は 5 桁市町村コード
+当初 `zfill(6)` で 6 桁化したところ、先頭 2 桁が「都道府県コードの先頭 1 桁」になり 47 都道府県が 4 グループに集約されて壊滅した。**N03_007 は元から 5 桁の文字列（先頭 2 桁が都道府県コード）**。zfill(5) または zfill なしが正しい。
+
+#### 落とし穴 2: tolerance を上げてもファイルサイズが減らない
+最初 `preserve_topology=True` で simplify したら 15MB のまま縮まなかった。`preserve_topology=False` に変えて + `drop_small_polygons(min_area=0.001)` で離島・突起を切り捨てたら、prefectures 11MB → 114KB / regions 11MB → 25KB に圧縮。コロプレス用には十分。
+
+#### 落とし穴 3: background プロセスの 10 分タイムアウト
+Bash の background 実行は約 10 分で SIGKILL される。`unary_union` を 124,000 features に対して都道府県別にやると 30 分超なので、複数回タイムアウトで途中で死んだ。**長時間 Python は foreground + `python3 -u`（バッファ無効化）で stdout が流れるように**。
+
+### 4.32.2 Phase 13-2（Workers conquests API）
+
+#### 設計判断: aws4fetch を vi.mock せず handleConquests 経由でテスト
+最初 `global.fetch = vi.fn()` で aws4fetch をモックしようとしたが、aws4fetch の内部 fetch がモジュール参照だったらしくタイムアウト。**`vi.mock('../src/dynamodb.js', ...)` でモジュール全体をモックする方が筋**。ハンドラ層のロジックは検証できる、aws4fetch そのものは別途 integration test で扱えばよい。
+
+#### 設計判断: BatchWriteItem ではなく個別 PutItem ループ
+DynamoDB の BatchWriteItem は ConditionExpression が使えない（既存スキップが不可）。**初回のみ書きたいので個別 PutItem + `ConditionExpression: 'attribute_not_exists(user_id)'` で回す**。25 件並列を狙うより、シリアル書込で書き分けエラーを `skipped` カウンタとして集計する。1 ユーザ × 月 1500 件規模なら十分。
+
+### 4.32.3 Phase 13-3（フロント履歴画面）
+
+#### 設計判断: メイン地図と別 Leaflet インスタンス
+履歴画面は SPA 内の別画面（`<section id="history-screen">`）で、独自の Leaflet インスタンスを持つ。共有すると「メイン地図の状態（軌跡・現在地）」と「履歴地図の状態」が混ざってバグるため。地図サイズ再計算のために `setTimeout(() => map.invalidateSize(), 100)` を画面切替時に呼ぶ。
+
+#### 設計判断: レベル 2 の市町村は踏破済のみ個別 fetch
+レベル 2（都道府県内市町村）の描画で「未踏も含めて全市町村ポリゴンを読む」と数十 KB × 数十ファイルが必要。代わりに**踏破済の市町村だけ `municipalities/{code}.geojson` を fetch して塗る**。未踏は背景の都道府県薄塗りで「触れていないこと」が見えるので十分。
+
+### 4.32.4 Phase 13-4（同期ロジック）
+
+#### 設計判断: 同期失敗 = 遅延、データロスではない
+`tryFlushConquests` は非同期で UI ブロックしない。POST が失敗しても `markVisitedSynced` を呼ばないので、`synced=false` のまま localStorage に残り次回起動時に再試行。「失敗 = 思い出が消える」設計を避ける。理解度テストでも確認した観点（4.21 章 2026-05-23 のテスト）。
+
+#### 設計判断: 当日分は flush しない
+`getUnsyncedVisitedBefore(now)` は `isSameLocalDay(firstVisit, now) === true` なら除外。**当日分は localStorage で表示用に使い、翌日以降に DynamoDB 反映**。理由: 同じ市町村に 1 日に何度も出入りしたとき、firstVisit が「最初の訪問時刻」として安定するのを待つ。N+1 書込でも害は無いが、シンプルさを優先。
+
+### 4.32.5 ファイルサイズの最終確認
+
+| ファイル | 生サイズ | gzip 想定 |
+|---|---|---|
+| regions.geojson | 25 KB | ~5 KB |
+| prefectures.geojson | 114 KB | ~25 KB |
+| conquest_meta.json | 106 KB | ~30 KB |
+| 履歴画面 1 回ロード合計 | 245 KB | ~60 KB |
+
+iPhone Safari メモリ予算（~1 GB）内に十分収まる。Cloudflare Pages の自動 gzip で実転送はさらに小さくなる。
 
 ---
 

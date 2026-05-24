@@ -58,6 +58,10 @@ export function markVisited(code, name, prefecture) {
       prefecture,
       firstVisit: new Date().toISOString(),
       description: null,
+      // Phase 13: 踏破履歴 DynamoDB 同期用フィールド（後から enrichVisitedWithCodes で埋まる）
+      prefectureCode: null,
+      regionCode: null,
+      synced: false,
     };
   }
   state.currentMuniCd = code;
@@ -65,6 +69,87 @@ export function markVisited(code, name, prefecture) {
 }
 export function getVisitedCount() {
   return Object.keys(loadState().visited).length;
+}
+
+/**
+ * 既存の visited に prefectureCode / regionCode を埋める（既に値があれば触らない）。
+ * conquest_meta.json から取得した {muni_code: {prefecture_code, region_code}} で更新する。
+ *
+ * @param {Record<string, {prefecture_code: string, region_code: string}>} meta
+ * @returns {number} 埋めたエントリ数
+ */
+export function enrichVisitedWithCodes(meta) {
+  const state = loadState();
+  let updated = 0;
+  for (const [code, v] of Object.entries(state.visited)) {
+    const m = meta[code];
+    if (!m) continue;
+    let changed = false;
+    if (!v.prefectureCode) {
+      v.prefectureCode = m.prefecture_code;
+      changed = true;
+    }
+    if (!v.regionCode) {
+      v.regionCode = m.region_code;
+      changed = true;
+    }
+    if (changed) updated++;
+  }
+  if (updated > 0) saveState(state);
+  return updated;
+}
+
+/**
+ * 前日以前（ローカル暦日）の synced=false な visited エントリを返す。
+ * DynamoDB へ flush するための候補。
+ *
+ * @param {number} nowMs - 「現在」のタイムスタンプ
+ * @returns {Array<{muni_code, name, prefecture, firstVisit, prefectureCode, regionCode}>}
+ */
+export function getUnsyncedVisitedBefore(nowMs) {
+  const state = loadState();
+  const result = [];
+  const now = new Date(nowMs);
+  for (const [code, v] of Object.entries(state.visited)) {
+    if (v.synced === true) continue;
+    if (!v.prefectureCode || !v.regionCode) continue;
+    const ts = Date.parse(v.firstVisit);
+    if (Number.isNaN(ts)) continue;
+    const visitDay = new Date(ts);
+    // 同じ暦日なら除外（今日の分は未確定として保留）
+    const sameDay =
+      visitDay.getFullYear() === now.getFullYear() &&
+      visitDay.getMonth() === now.getMonth() &&
+      visitDay.getDate() === now.getDate();
+    if (sameDay) continue;
+    result.push({
+      muni_code: code,
+      name: v.name,
+      prefecture: v.prefecture,
+      firstVisit: v.firstVisit,
+      prefectureCode: v.prefectureCode,
+      regionCode: v.regionCode,
+    });
+  }
+  return result;
+}
+
+/**
+ * 指定 muni_code 群に synced=true をセット。
+ * @param {string[]} muniCodes
+ */
+export function markVisitedSynced(muniCodes) {
+  if (!Array.isArray(muniCodes) || muniCodes.length === 0) return;
+  const state = loadState();
+  let changed = false;
+  for (const code of muniCodes) {
+    const v = state.visited[code];
+    if (v && v.synced !== true) {
+      v.synced = true;
+      changed = true;
+    }
+  }
+  if (changed) saveState(state);
 }
 
 // === Description cache（Plan I: 市町村ごと単一の要約） ===

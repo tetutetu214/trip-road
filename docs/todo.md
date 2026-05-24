@@ -544,14 +544,26 @@ plan.md §13 / spec.md §14 で仕様確定。階層ズーミング UI（日本�
    - [x] IAM ポリシー `TripRoadDynamoDBConquestsPolicy` を `trip-road-telemetry-writer` に追加（PutItem / BatchWriteItem / Query 限定）
    - [x] Workers Secret `DYNAMODB_CONQUESTS_TABLE` 登録（値: `trip-road-conquests`）
 
+### 実装完了（feature/conquests-history ブランチ）
+
+- [x] **Phase 13-1**: `preprocess/build_regions.py` で `regions.geojson` (8 features, 25KB) / `prefectures.geojson` (47 features, 114KB) / `conquest_meta.json` (1905 entries, 106KB) を生成。pytest 18 件。
+- [x] **Phase 13-2**: `workers/src/dynamodb.js` + `conquests.js` 新設、`/api/conquests` POST/GET を index.js から配線。Vitest 19 件追加（全 211 件 pass）
+- [x] **Phase 13-3**: `public/assets/history.js` / `history.css` / `region_mapping.js` / `conquest_rate.js` 新設、`index.html` に履歴画面 DOM と 🗺️ ボタン、Vitest 28 件追加
+- [x] **Phase 13-4**: `app.js` の起動シーケンスに `tryFlushConquests` 組込み、`storage.js` に `synced` / `prefectureCode` / `regionCode` フィールド + 3 ヘルパー関数。Vitest 6 件追加（全 113 件 pass）
+
 ### 未着手
 
-- [ ] **Phase 13-1**: `preprocess/build_regions.py` で `public/regions.geojson` / `public/prefectures.geojson` / `public/conquest_meta.json` を生成
-- [ ] **Phase 13-2**: `workers/src/conquests.js` 新設、POST/GET `/api/conquests` ハンドラ + aws4fetch で DynamoDB 直叩き
-- [ ] **Phase 13-3**: `public/assets/history.js` / `history.css` / `region_mapping.js` / `conquest_rate.js` 新設、履歴画面 DOM 追加
-- [ ] **Phase 13-4**: `app.js` の起動シーケンスに同期 flush 組込み、`storage.js` に `synced` フラグ拡張
-- [ ] **Phase 13-5**: 既存 localStorage の自動移行を実機で確認
-- [ ] **Phase 13-6**: Workers + フロントを本番反映、色階調を実機で微調整
+- [ ] PR 作成 (`feature/conquests-history` → `main`)
+- [ ] **Phase 13-6**: Workers + フロント + データを本番反映
+   - [ ] `cd workers && bash deploy_production.sh` で Worker を更新
+   - [ ] `bash preprocess/run_deploy.sh` で `preprocess/out/` を `trip-road-data` Pages に反映
+   - [ ] `bash deploy_frontend.sh` で `public/` を `trip-road` Pages に反映
+- [ ] **Phase 13-5（実機観測タスク）**: iPhone Safari で
+   - [ ] 既存 visited が起動時に DynamoDB に転送される（DevTools の Network で /api/conquests POST 200 を確認）
+   - [ ] 履歴画面 (🗺️) を開くと地方単位の色濃度が表示される
+   - [ ] 関東 → 神奈川県 → 綾瀬市と階層遷移する
+   - [ ] 詳細画面に初回訪問日と解説キャッシュが出る
+- [ ] 色階調 (10%/30%/60% 閾値) の実機調整（必要なら）
 
 ## Issue #48: 陰影起伏図トグルを 3 段階（OFF/弱/強）に拡張（2026-05-21）
 
