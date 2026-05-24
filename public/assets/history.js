@@ -134,6 +134,7 @@ export function setupHistoryScreen() {
 }
 
 export async function openHistoryScreen() {
+  debugMsg('history open');
   showHistoryScreen();
   if (!historyMap) initHistoryMap();
   setLoading(true);
@@ -185,18 +186,44 @@ function initHistoryMap() {
 
 /**
  * 画面上にデバッグメッセージを表示する。iOS Safari のコンソールを
- * 見に行かなくても挙動を観察できるように。本修正が確認できたら削除する。
+ * 見に行かなくても挙動を観察できるように。
+ *
+ * HTML / CSS のキャッシュに依存しないよう、要素が無ければ JS で動的に
+ * 生成する。これで iPhone が古い index.html を握っていても確実に表示される。
+ * 本修正が確認できたら別 PR で全削除する。
  */
 function debugMsg(msg) {
   console.log('[history]', msg);
-  const el = document.getElementById('history-debug-log');
-  if (!el) return;
+  let el = document.getElementById('history-debug-log');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'history-debug-log';
+    Object.assign(el.style, {
+      position: 'fixed',
+      left: '8px',
+      bottom: '60px',
+      zIndex: '99999',
+      maxWidth: '80vw',
+      maxHeight: '35vh',
+      overflow: 'hidden',
+      padding: '6px 8px',
+      background: 'rgba(0,0,0,0.88)',
+      color: '#9fe1cb',
+      border: '1px solid #2e6651',
+      borderRadius: '6px',
+      fontFamily: 'ui-monospace, Menlo, monospace',
+      fontSize: '11px',
+      lineHeight: '1.45',
+      pointerEvents: 'none',
+      whiteSpace: 'pre-wrap',
+    });
+    document.body.appendChild(el);
+  }
   const time = new Date().toTimeString().slice(0, 8);
   const line = document.createElement('div');
   line.textContent = `${time} ${msg}`;
   el.appendChild(line);
-  // 直近 8 行のみ保持
-  while (el.childElementCount > 8) el.removeChild(el.firstChild);
+  while (el.childElementCount > 10) el.removeChild(el.firstChild);
 }
 
 async function loadHistoryData() {
@@ -526,27 +553,42 @@ async function renderLevel2() {
 
 function renderLevel3(item) {
   debugMsg(`L3 ${item?.name ?? '?'}`);
-  const detail = document.getElementById('history-detail');
-  if (!detail) {
-    debugMsg('ERR #history-detail なし');
-    return;
-  }
-  const date = new Date(item.first_visit);
+  const date = new Date(item?.first_visit);
   const dateStr = isNaN(date) ? '?' : date.toLocaleString('ja-JP');
-
   const state = loadState();
-  const desc = state.visited?.[item.muni_code]?.description ?? '';
+  const desc = state.visited?.[item?.muni_code]?.description ?? '';
+
+  // index.html のキャッシュに依存しないよう、モーダル DOM もここで動的生成する。
+  // 既存要素があればそれを使い、無ければ body に追加する。
+  let detail = document.getElementById('history-detail');
+  if (!detail) {
+    debugMsg('L3 detail 動的生成');
+    detail = document.createElement('div');
+    detail.id = 'history-detail';
+    Object.assign(detail.style, {
+      position: 'fixed',
+      inset: '0',
+      display: 'none',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: 'rgba(0,0,0,0.6)',
+      zIndex: '100000',
+    });
+    document.body.appendChild(detail);
+  }
 
   detail.innerHTML = `
-    <div class="detail-card">
-      <button class="detail-close" aria-label="閉じる">×</button>
-      <h3>${escapeHtml(item.prefecture)} ${escapeHtml(item.name)}</h3>
-      <p class="detail-date">初回訪問: ${escapeHtml(dateStr)}</p>
-      <p class="detail-desc">${escapeHtml(desc || '解説キャッシュなし')}</p>
+    <div style="background:#16161a;border:1px solid #2e6651;border-radius:12px;padding:18px 18px 22px;width:min(86vw,360px);position:relative;color:#e6e6ea;font-family:sans-serif;">
+      <button id="history-detail-close" aria-label="閉じる" style="position:absolute;top:8px;right:8px;background:transparent;color:#8a8a92;border:none;font-size:22px;line-height:1;padding:4px 8px;">×</button>
+      <h3 style="margin:0 0 8px 0;font-size:18px;color:#9fe1cb;">${escapeHtml(item?.prefecture ?? '')} ${escapeHtml(item?.name ?? '')}</h3>
+      <p style="margin:6px 0;font-size:12px;color:#8a8a92;">初回訪問: ${escapeHtml(dateStr)}</p>
+      <p style="margin:8px 0 0;font-size:13px;line-height:1.6;white-space:pre-wrap;">${escapeHtml(desc || '解説キャッシュなし')}</p>
     </div>
   `;
-  detail.style.display = '';
-  const close = detail.querySelector('.detail-close');
+  detail.style.display = 'flex';
+  debugMsg('L3 表示済み');
+
+  const close = document.getElementById('history-detail-close');
   if (close) close.addEventListener('click', () => {
     detail.style.display = 'none';
     currentLevel = 2;
