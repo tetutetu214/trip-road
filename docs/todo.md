@@ -551,19 +551,25 @@ plan.md §13 / spec.md §14 で仕様確定。階層ズーミング UI（日本�
 - [x] **Phase 13-3**: `public/assets/history.js` / `history.css` / `region_mapping.js` / `conquest_rate.js` 新設、`index.html` に履歴画面 DOM と 🗺️ ボタン、Vitest 28 件追加
 - [x] **Phase 13-4**: `app.js` の起動シーケンスに `tryFlushConquests` 組込み、`storage.js` に `synced` / `prefectureCode` / `regionCode` フィールド + 3 ヘルパー関数。Vitest 6 件追加（全 113 件 pass）
 
+### 実装後の修正（PR #56〜#63 + main 直接コミット多数）
+
+実機 iPhone Safari での観察を踏まえ、複数回の修正を経て以下の最終形に到達。E2E (Playwright chromium-iphone-emulated) 4 件で動作保証済。
+
+- [x] 2 タップ遷移化（1 タップ目で白縁ハイライト、2 タップ目で遷移）
+- [x] 県内全市町村を fetch して灰塗り、踏破済のみ緑塗り
+- [x] `setMaxBounds` で各レベルのパン範囲制限
+- [x] `safe-area-inset-top` で戻るボタンが iPhone ノッチに被らない
+- [x] 離島除外で本土のみフィット（関東は小笠原、北海道は北方領土、沖縄は八重山を除外）
+- [x] レベル切替 z-order を「未踏 → 踏破済」順に固定
+- [x] preferCanvas を不採用（SVG renderer の方が動的 view 変更後の hit testing が安定）
+- [x] L3 詳細モーダル DOM を JS で動的生成（HTML キャッシュ非依存）
+- [x] click と tap 両方 listen で touch event にも対応
+- [x] **Phase 13-5（実機観測）**: 残タスク — iPhone 実機で当 E2E と同じ動線が動作するか確認
+
 ### 未着手
 
-- [ ] PR 作成 (`feature/conquests-history` → `main`)
-- [ ] **Phase 13-6**: Workers + フロント + データを本番反映
-   - [ ] `cd workers && bash deploy_production.sh` で Worker を更新
-   - [ ] `bash preprocess/run_deploy.sh` で `preprocess/out/` を `trip-road-data` Pages に反映
-   - [ ] `bash deploy_frontend.sh` で `public/` を `trip-road` Pages に反映
-- [ ] **Phase 13-5（実機観測タスク）**: iPhone Safari で
-   - [ ] 既存 visited が起動時に DynamoDB に転送される（DevTools の Network で /api/conquests POST 200 を確認）
-   - [ ] 履歴画面 (🗺️) を開くと地方単位の色濃度が表示される
-   - [ ] 関東 → 神奈川県 → 綾瀬市と階層遷移する
-   - [ ] 詳細画面に初回訪問日と解説キャッシュが出る
 - [ ] 色階調 (10%/30%/60% 閾値) の実機調整（必要なら）
+- [ ] デプロイは main の最新（コミット `9bb0e91`）で完了済
 
 ## Issue #48: 陰影起伏図トグルを 3 段階（OFF/弱/強）に拡張（2026-05-21）
 
