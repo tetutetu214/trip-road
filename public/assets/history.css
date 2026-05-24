@@ -14,7 +14,9 @@
 .history-header {
   display: flex;
   align-items: center;
-  padding: 12px 14px;
+  /* iPhone のノッチ / Dynamic Island に戻るボタンが被らないよう
+     safe-area-inset-top を上余白に加算する。viewport-fit=cover が前提 */
+  padding: max(12px, calc(env(safe-area-inset-top, 0px) + 8px)) 14px 12px;
   gap: 12px;
   border-bottom: 1px solid #1f1f23;
 }
