@@ -217,14 +217,15 @@ function debugMsg(msg) {
     el.id = 'history-debug-log';
     Object.assign(el.style, {
       position: 'fixed',
+      // 画面上部のヘッダ・stats の直下に貼る（確実に視認できる位置）
+      top: '88px',
       left: '8px',
-      bottom: '60px',
+      right: '8px',
       zIndex: '99999',
-      maxWidth: '80vw',
-      maxHeight: '35vh',
-      overflow: 'hidden',
+      maxHeight: '30vh',
+      overflow: 'auto',
       padding: '6px 8px',
-      background: 'rgba(0,0,0,0.88)',
+      background: 'rgba(0,0,0,0.92)',
       color: '#9fe1cb',
       border: '1px solid #2e6651',
       borderRadius: '6px',

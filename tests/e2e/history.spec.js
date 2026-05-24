@@ -66,7 +66,9 @@ test.describe('踏破履歴ビュー E2E', () => {
         { lat, lng },
       );
       const mapBox = await page.locator('#history-map').boundingBox();
-      await page.mouse.click(mapBox.x + point.x, mapBox.y + point.y);
+      // iPhone エミュレーション（hasTouch: true）では mouse event ではなく
+      // touch event を発火しないと Leaflet の Canvas hit testing が動かない
+      await page.touchscreen.tap(mapBox.x + point.x, mapBox.y + point.y);
     };
 
     // 1 タップ目: ハイライト（タイトルはまだ「日本全土」）
@@ -96,7 +98,9 @@ test.describe('踏破履歴ビュー E2E', () => {
         { lat, lng },
       );
       const mapBox = await page.locator('#history-map').boundingBox();
-      await page.mouse.click(mapBox.x + point.x, mapBox.y + point.y);
+      // iPhone エミュレーション（hasTouch: true）では mouse event ではなく
+      // touch event を発火しないと Leaflet の Canvas hit testing が動かない
+      await page.touchscreen.tap(mapBox.x + point.x, mapBox.y + point.y);
     };
 
     // 関東 → 神奈川 → 県内へ
