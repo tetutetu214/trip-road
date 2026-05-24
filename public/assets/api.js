@@ -112,6 +112,73 @@ export async function fetchDescription(password, req, opts = {}) {
 }
 
 /**
+ * 踏破履歴を Workers `/api/conquests` に POST する（バッチ書込）。
+ *
+ * Phase 13-2 / spec.md §14.6
+ *
+ * @param {string} password
+ * @param {Array<{muni_code, first_visit, prefecture_code, region_code, name, prefecture}>} items
+ * @returns {Promise<{ok: true, written: number, skipped: number} | {ok: false, status: number, error: string}>}
+ */
+export async function postConquests(password, items) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/conquests`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-App-Password': password,
+      },
+      body: JSON.stringify({ items }),
+    });
+    if (res.status === 401) {
+      return { ok: false, status: 401, error: 'unauthorized' };
+    }
+    if (!res.ok) {
+      return { ok: false, status: res.status, error: 'upstream_error' };
+    }
+    const data = await res.json();
+    return { ok: true, written: data.written ?? 0, skipped: data.skipped ?? 0 };
+  } catch (e) {
+    return { ok: false, status: 0, error: String(e) };
+  }
+}
+
+/**
+ * 踏破履歴の全件を Workers `/api/conquests` から GET する。
+ *
+ * @param {string} password
+ * @param {{timeoutMs?: number}} [opts]
+ * @returns {Promise<{ok: true, items: object[]} | {ok: false, status: number, error: string}>}
+ */
+export async function getConquests(password, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? 5000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/conquests`, {
+      method: 'GET',
+      headers: { 'X-App-Password': password },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (res.status === 401) {
+      return { ok: false, status: 401, error: 'unauthorized' };
+    }
+    if (!res.ok) {
+      return { ok: false, status: res.status, error: 'upstream_error' };
+    }
+    const data = await res.json();
+    return { ok: true, items: Array.isArray(data.items) ? data.items : [] };
+  } catch (e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') {
+      return { ok: false, status: 0, error: 'timeout' };
+    }
+    return { ok: false, status: 0, error: String(e) };
+  }
+}
+
+/**
  * テレメトリバッチを Workers `/api/telemetry` に送る。
  * 失敗時は 1 回だけリトライ（2 秒後）。
  */
