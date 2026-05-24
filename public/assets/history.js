@@ -406,6 +406,12 @@ async function renderLevel2() {
 
   const prefConquests = conquests.filter(c => c.prefecture_code === currentPrefecture);
   const total = prefTotals[currentPrefecture] ?? 0;
+  console.log('[history] renderLevel2', {
+    prefCode: currentPrefecture,
+    prefName,
+    conqueredCount: prefConquests.length,
+    conqueredCodes: prefConquests.map(c => c.muni_code),
+  });
   setStats(
     `${prefName} の踏破: ${prefConquests.length} / ${total}`,
     total > 0 ? `${Math.round((prefConquests.length / total) * 100)}%` : '',
@@ -472,20 +478,33 @@ async function renderLevel2() {
   }
 
   // 2) 踏破済（緑）を後に add（クリックハンドラあり、上に乗ってタップを受ける）
+  let conqueredAdded = 0;
   for (const item of fetched) {
     if (!item) continue;
     if (!conqueredSet.has(item.muniCode)) continue;
     const conquest = prefConquests.find(c => c.muni_code === item.muniCode);
-    L.geoJSON(item.geo, {
+    const geoLayer = L.geoJSON(item.geo, {
       style: { fillColor: '#5dcaa5', fillOpacity: 0.75, color: '#9fe1cb', weight: 1 },
       onEachFeature: (_f, layer) => {
-        layer.on('click', () => {
+        layer.on('click', (e) => {
+          console.log('[history] muni clicked', item.muniCode, conquest);
+          L.DomEvent.stopPropagation(e);
           currentLevel = 3;
           renderLevel3(conquest);
         });
       },
-    }).addTo(historyMap);
+    });
+    geoLayer.addTo(historyMap);
+    conqueredAdded++;
   }
+  console.log('[history] level2 add finished. conqueredAdded =', conqueredAdded);
+
+  // 念のため: map レベルのクリックでも、その位置の踏破済を判定して開く
+  // （個別 path のクリックハンドラがなぜか効かないケースのフォールバック）
+  historyMap.off('click.historyDebug');
+  historyMap.on('click.historyDebug', (e) => {
+    console.log('[history] map clicked at', e.latlng);
+  });
 
   setLoading(false);
 }
@@ -493,8 +512,12 @@ async function renderLevel2() {
 // === レベル 3: 市町村詳細モーダル ===
 
 function renderLevel3(item) {
+  console.log('[history] renderLevel3 called with', item);
   const detail = document.getElementById('history-detail');
-  if (!detail) return;
+  if (!detail) {
+    console.warn('[history] #history-detail not found');
+    return;
+  }
   const date = new Date(item.first_visit);
   const dateStr = isNaN(date) ? '?' : date.toLocaleString('ja-JP');
 
