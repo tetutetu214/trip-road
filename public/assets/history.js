@@ -589,6 +589,7 @@ async function renderLevel2() {
 
 function renderLevel3(item) {
   debugMsg(`L3 ${item?.name ?? '?'}`);
+  exposeForE2E();
   const date = new Date(item?.first_visit);
   const dateStr = isNaN(date) ? '?' : date.toLocaleString('ja-JP');
   const state = loadState();
