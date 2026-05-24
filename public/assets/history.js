@@ -5,6 +5,12 @@
  * メイン地図とは別の Leaflet インスタンスを持ち、画面を出入りするたびに
  * レイヤーを掃除して初期状態に戻す。
  *
+ * UI 設計（実機フィードバック反映、2026-05-24）:
+ *   - 1 タップ目: そのエリアを「選択状態」にする（ボーダー強調）
+ *   - 2 タップ目（同一エリア再タップ）: 下位レベルへ遷移
+ *   - レベル切替時に setMaxBounds でパン範囲を制限（他エリアにスワイプで滑らない）
+ *   - 県レベルでは全市町村を灰塗りし、踏破済のみ緑塗りで「行ったところ」を可視化
+ *
  * データソース:
  *   - DATA_BASE_URL/regions.geojson          (8 地方ポリゴン)
  *   - DATA_BASE_URL/prefectures.geojson      (47 都道府県ポリゴン)
@@ -20,6 +26,7 @@ import { REGION_NAMES } from './region_mapping.js';
 
 let historyMap = null;
 let conquests = [];           // [{muni_code, region_code, prefecture_code, ...}]
+let conquestMeta = {};        // {muni_code: {region_code, prefecture_code}}
 let regionTotals = {};        // {region_code: muni_count}
 let prefTotals = {};          // {prefecture_code: muni_count}
 let regionGeo = null;
@@ -27,22 +34,21 @@ let prefectureGeo = null;
 let currentLevel = 0;
 let currentRegion = null;
 let currentPrefecture = null;
+// 1 タップ目で選択した（まだ遷移していない）コード。同一を 2 度タップで遷移。
+let pendingRegion = null;
+let pendingPrefecture = null;
 let dataLoaded = false;
 
 const HISTORY_SCREEN_ID = 'history-screen';
 const HISTORY_MAP_ID = 'history-map';
+// 日本全土のおおよその bounds（北海道北端〜沖縄南端を覆う）
+const JAPAN_BOUNDS = [[24, 122], [46, 146]];
 
-/**
- * 履歴画面を初期化（DOM がレンダリングされたあと 1 回だけ呼ぶ）。
- */
 export function setupHistoryScreen() {
   const back = document.querySelector(`#${HISTORY_SCREEN_ID} .history-back`);
   if (back) back.addEventListener('click', handleBack);
 }
 
-/**
- * 履歴画面を表示してデータをロード・描画する。
- */
 export async function openHistoryScreen() {
   showHistoryScreen();
   if (!historyMap) initHistoryMap();
@@ -52,6 +58,8 @@ export async function openHistoryScreen() {
     currentLevel = 0;
     currentRegion = null;
     currentPrefecture = null;
+    pendingRegion = null;
+    pendingPrefecture = null;
     renderLevel0();
   } catch (e) {
     setError('履歴の読み込みに失敗しました');
@@ -81,25 +89,26 @@ function initHistoryMap() {
     zoom: 5,
     zoomControl: false,
     attributionControl: false,
+    maxBounds: JAPAN_BOUNDS,
+    maxBoundsViscosity: 1.0,  // 境界を超えるパンをはね返す
   });
   L.tileLayer(TILE_URL, { maxZoom: 18 }).addTo(historyMap);
-  // 地図サイズの再計算（show 切替時に必要）
   setTimeout(() => historyMap.invalidateSize(), 100);
 }
 
 async function loadHistoryData() {
   if (dataLoaded) {
-    // 踏破履歴は毎回再取得（visited 同期分を取り込むため）
     await refreshConquests();
     return;
   }
-  // 1 度きりの静的データ読込
-  const [regions, prefs] = await Promise.all([
+  const [regions, prefs, meta] = await Promise.all([
     fetch(`${DATA_BASE_URL}/regions.geojson`).then(r => r.json()),
     fetch(`${DATA_BASE_URL}/prefectures.geojson`).then(r => r.json()),
+    fetch(`${DATA_BASE_URL}/conquest_meta.json`).then(r => r.json()),
   ]);
   regionGeo = regions;
   prefectureGeo = prefs;
+  conquestMeta = meta;
   regionTotals = Object.fromEntries(
     regions.features.map(f => [f.properties.region_code, f.properties.muni_count]),
   );
@@ -118,7 +127,6 @@ async function refreshConquests() {
   }
   const result = await getConquests(password, { timeoutMs: 5000 });
   if (result.ok) {
-    // DynamoDB の結果 + localStorage の未同期の当日分をマージ
     const merged = new Map();
     for (const it of result.items) merged.set(it.muni_code, it);
     for (const local of collectLocalConquests()) {
@@ -126,16 +134,11 @@ async function refreshConquests() {
     }
     conquests = Array.from(merged.values());
   } else {
-    // タイムアウト・障害時は localStorage のみで表示
     conquests = collectLocalConquests();
     console.warn('[history] /api/conquests failed, falling back to localStorage', result);
   }
 }
 
-/**
- * localStorage の visited を踏破履歴アイテム形式に変換する。
- * region_code / prefecture_code が無いエントリは muni_code から導出する。
- */
 function collectLocalConquests() {
   const state = loadState();
   const list = [];
@@ -153,23 +156,26 @@ function collectLocalConquests() {
   return list;
 }
 
-// === 描画 ===
+// === 描画ヘルパー ===
 
 function clearLayers() {
   if (!historyMap) return;
   historyMap.eachLayer((layer) => {
-    // タイルレイヤー以外を削除
     if (layer instanceof L.TileLayer) return;
     historyMap.removeLayer(layer);
   });
 }
 
-function styleForRate(rate) {
+/**
+ * 踏破率（または踏破済か否か）に応じたコロプレス用スタイルを返す。
+ * isSelected=true のときは強調ボーダー。
+ */
+function styleForRate(rate, isSelected = false) {
   return {
     fillColor: colorForRate(rate),
-    fillOpacity: 0.7,
-    color: '#5dcaa5',
-    weight: 1,
+    fillOpacity: isSelected ? 0.9 : 0.7,
+    color: isSelected ? '#ffffff' : '#5dcaa5',
+    weight: isSelected ? 3 : 1,
   };
 }
 
@@ -199,35 +205,53 @@ function setError(msg) {
   }
 }
 
+// === レベル 0: 日本全土 → 8 地方 ===
+
 function renderLevel0() {
   if (!historyMap || !regionGeo) return;
   clearLayers();
   setTitle('日本全土');
   const totalMuni = Object.values(regionTotals).reduce((a, b) => a + b, 0);
-  setStats(`8 地方 / ${conquests.length} 市町村踏破`, `全 ${totalMuni} 市町村中 ${conquests.length} 踏破`);
+  setStats(
+    `8 地方 / ${conquests.length} 市町村踏破`,
+    `全 ${totalMuni} 市町村中 ${conquests.length} 踏破`,
+  );
 
   L.geoJSON(regionGeo, {
     style: (feature) => {
-      const rate = rateForRegion(feature.properties.region_code, conquests, regionTotals);
-      return styleForRate(rate);
+      const code = feature.properties.region_code;
+      const rate = rateForRegion(code, conquests, regionTotals);
+      return styleForRate(rate, code === pendingRegion);
     },
     onEachFeature: (feature, layer) => {
       layer.on('click', () => {
-        currentRegion = feature.properties.region_code;
-        currentLevel = 1;
-        renderLevel1();
+        const code = feature.properties.region_code;
+        if (pendingRegion === code) {
+          // 2 タップ目: 遷移
+          currentRegion = code;
+          currentLevel = 1;
+          pendingRegion = null;
+          renderLevel1();
+        } else {
+          // 1 タップ目: ハイライト
+          pendingRegion = code;
+          renderLevel0();
+        }
       });
     },
   }).addTo(historyMap);
+
+  historyMap.setMaxBounds(JAPAN_BOUNDS);
   historyMap.setView([36, 138], 5);
 }
+
+// === レベル 1: 地方 → 都道府県 ===
 
 function renderLevel1() {
   if (!historyMap || !prefectureGeo || !currentRegion) return;
   clearLayers();
   setTitle(REGION_NAMES[currentRegion] ?? currentRegion);
 
-  // この地方の都道府県だけを抽出
   const filtered = {
     type: 'FeatureCollection',
     features: prefectureGeo.features.filter(
@@ -245,22 +269,36 @@ function renderLevel1() {
 
   const layer = L.geoJSON(filtered, {
     style: (feature) => {
-      const rate = rateForPrefecture(feature.properties.prefecture_code, conquests, prefTotals);
-      return styleForRate(rate);
+      const code = feature.properties.prefecture_code;
+      const rate = rateForPrefecture(code, conquests, prefTotals);
+      return styleForRate(rate, code === pendingPrefecture);
     },
     onEachFeature: (feature, l) => {
       l.on('click', () => {
-        currentPrefecture = feature.properties.prefecture_code;
-        currentLevel = 2;
-        renderLevel2();
+        const code = feature.properties.prefecture_code;
+        if (pendingPrefecture === code) {
+          currentPrefecture = code;
+          currentLevel = 2;
+          pendingPrefecture = null;
+          renderLevel2();
+        } else {
+          pendingPrefecture = code;
+          renderLevel1();
+        }
       });
     },
   }).addTo(historyMap);
+
   try {
     const bounds = layer.getBounds();
-    if (bounds.isValid()) historyMap.fitBounds(bounds, { padding: [20, 20] });
+    if (bounds.isValid()) {
+      historyMap.setMaxBounds(bounds.pad(0.05));
+      historyMap.fitBounds(bounds, { padding: [20, 20] });
+    }
   } catch (_) { /* noop */ }
 }
+
+// === レベル 2: 都道府県 → 市町村 ===
 
 async function renderLevel2() {
   if (!historyMap || !currentPrefecture) return;
@@ -271,7 +309,6 @@ async function renderLevel2() {
   const prefName = prefFeature?.properties.name ?? currentPrefecture;
   setTitle(prefName);
 
-  // この県の踏破済 muni を抽出
   const prefConquests = conquests.filter(c => c.prefecture_code === currentPrefecture);
   const total = prefTotals[currentPrefecture] ?? 0;
   setStats(
@@ -279,39 +316,60 @@ async function renderLevel2() {
     total > 0 ? `${Math.round((prefConquests.length / total) * 100)}%` : '',
   );
 
-  // 都道府県ポリゴンを薄く敷く（境界の見当用）
+  // 県境界を点線で薄く表示（市町村レイヤーの上から見えるように後で再 add）
   if (prefFeature) {
-    L.geoJSON(prefFeature, {
-      style: { color: '#5dcaa5', weight: 1.5, fillOpacity: 0, dashArray: '4,4' },
-    }).addTo(historyMap);
+    const prefLayer = L.geoJSON(prefFeature, {
+      style: { color: '#9fe1cb', weight: 1.5, fillOpacity: 0, dashArray: '4,4' },
+      interactive: false,
+    });
     try {
-      const bounds = L.geoJSON(prefFeature).getBounds();
-      if (bounds.isValid()) historyMap.fitBounds(bounds, { padding: [10, 10] });
+      const bounds = prefLayer.getBounds();
+      if (bounds.isValid()) {
+        historyMap.setMaxBounds(bounds.pad(0.05));
+        historyMap.fitBounds(bounds, { padding: [10, 10] });
+      }
     } catch (_) { /* noop */ }
+    // 県境は最後に add してトップに見せる
+    prefLayer.addTo(historyMap);
   }
 
-  // 踏破済市町村だけ個別 GeoJSON を取得して塗る（未踏は塗らない、API 負荷軽減）
+  // 県内の全市町村を抽出（conquest_meta が真実）
+  const muniCodesInPref = Object.keys(conquestMeta).filter(
+    c => conquestMeta[c].prefecture_code === currentPrefecture,
+  );
+  const conqueredSet = new Set(prefConquests.map(c => c.muni_code));
+
   setLoading(true);
-  await Promise.all(prefConquests.map(async (c) => {
+  // 全市町村ポリゴンを並列 fetch して灰 / 緑で塗り分け
+  await Promise.all(muniCodesInPref.map(async (muniCode) => {
     try {
-      const res = await fetch(`${DATA_BASE_URL}/municipalities/${c.muni_code}.geojson`);
+      const res = await fetch(`${DATA_BASE_URL}/municipalities/${muniCode}.geojson`);
       if (!res.ok) return;
       const geo = await res.json();
+      const isConquered = conqueredSet.has(muniCode);
+      const style = isConquered
+        ? { fillColor: '#5dcaa5', fillOpacity: 0.7, color: '#5dcaa5', weight: 0.6 }
+        : { fillColor: '#2a2a2a', fillOpacity: 0.55, color: '#3a3a3e', weight: 0.4 };
       L.geoJSON(geo, {
-        style: { ...styleForRate(1), fillOpacity: 0.65 },
+        style,
         onEachFeature: (_f, layer) => {
-          layer.on('click', () => {
-            currentLevel = 3;
-            renderLevel3(c);
-          });
+          if (isConquered) {
+            const conquest = prefConquests.find(c => c.muni_code === muniCode);
+            layer.on('click', () => {
+              currentLevel = 3;
+              renderLevel3(conquest);
+            });
+          }
         },
       }).addTo(historyMap);
     } catch (e) {
-      console.warn('[history] muni fetch failed', c.muni_code, e);
+      console.warn('[history] muni fetch failed', muniCode, e);
     }
   }));
   setLoading(false);
 }
+
+// === レベル 3: 市町村詳細モーダル ===
 
 function renderLevel3(item) {
   const detail = document.getElementById('history-detail');
@@ -347,16 +405,17 @@ function handleBack() {
   }
   if (currentLevel === 2) {
     currentLevel = 1;
+    pendingPrefecture = null;
     renderLevel1();
     return;
   }
   if (currentLevel === 1) {
     currentLevel = 0;
     currentRegion = null;
+    pendingRegion = null;
     renderLevel0();
     return;
   }
-  // currentLevel 0 → メイン画面に戻る
   hideHistoryScreen();
 }
 
