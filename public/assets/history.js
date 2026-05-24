@@ -442,32 +442,51 @@ async function renderLevel2() {
   const conqueredSet = new Set(prefConquests.map(c => c.muni_code));
 
   setLoading(true);
-  // 全市町村ポリゴンを並列 fetch して灰 / 緑で塗り分け
-  await Promise.all(muniCodesInPref.map(async (muniCode) => {
+  // 全市町村ポリゴンを並列 fetch（add は後で順序を制御する）
+  const fetched = await Promise.all(muniCodesInPref.map(async (muniCode) => {
     try {
       const res = await fetch(`${DATA_BASE_URL}/municipalities/${muniCode}.geojson`);
-      if (!res.ok) return;
+      if (!res.ok) return null;
       const geo = await res.json();
-      const isConquered = conqueredSet.has(muniCode);
-      const style = isConquered
-        ? { fillColor: '#5dcaa5', fillOpacity: 0.7, color: '#5dcaa5', weight: 0.6 }
-        : { fillColor: '#2a2a2a', fillOpacity: 0.55, color: '#3a3a3e', weight: 0.4 };
-      L.geoJSON(geo, {
-        style,
-        onEachFeature: (_f, layer) => {
-          if (isConquered) {
-            const conquest = prefConquests.find(c => c.muni_code === muniCode);
-            layer.on('click', () => {
-              currentLevel = 3;
-              renderLevel3(conquest);
-            });
-          }
-        },
-      }).addTo(historyMap);
+      return { muniCode, geo };
     } catch (e) {
       console.warn('[history] muni fetch failed', muniCode, e);
+      return null;
     }
   }));
+
+  // Leaflet の同レイヤー内では「後から add した path が DOM 上で前面」になり、
+  // タップ判定はその前面要素が優先される。並列 fetch で add 順がランダムだと
+  // 未踏（灰）の上に踏破済（緑）が乗ったり逆になったりして、踏破済タップが
+  // 灰塗りに吸われて renderLevel3 が呼ばれない不具合があった。
+  // 確実に「踏破済タップが拾われる」順序にするため、まず未踏を全部 add、
+  // そのあと踏破済を add する 2 パス構造にする。
+
+  // 1) 未踏（灰）を先に add（クリックハンドラなし）
+  for (const item of fetched) {
+    if (!item) continue;
+    if (conqueredSet.has(item.muniCode)) continue;
+    L.geoJSON(item.geo, {
+      style: { fillColor: '#2a2a2a', fillOpacity: 0.55, color: '#3a3a3e', weight: 0.4 },
+    }).addTo(historyMap);
+  }
+
+  // 2) 踏破済（緑）を後に add（クリックハンドラあり、上に乗ってタップを受ける）
+  for (const item of fetched) {
+    if (!item) continue;
+    if (!conqueredSet.has(item.muniCode)) continue;
+    const conquest = prefConquests.find(c => c.muni_code === item.muniCode);
+    L.geoJSON(item.geo, {
+      style: { fillColor: '#5dcaa5', fillOpacity: 0.75, color: '#9fe1cb', weight: 1 },
+      onEachFeature: (_f, layer) => {
+        layer.on('click', () => {
+          currentLevel = 3;
+          renderLevel3(conquest);
+        });
+      },
+    }).addTo(historyMap);
+  }
+
   setLoading(false);
 }
 
