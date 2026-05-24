@@ -44,6 +44,90 @@ const HISTORY_MAP_ID = 'history-map';
 // 日本全土のおおよその bounds（北海道北端〜沖縄南端を覆う）
 const JAPAN_BOUNDS = [[24, 122], [46, 146]];
 
+/**
+ * 単一 ring の符号付き面積を shoelace 公式で計算（GeoJSON 座標は [lon, lat]）。
+ * 経緯度の度単位での近似面積で、相対比較にのみ使う。
+ */
+export function ringArea(ring) {
+  let area = 0;
+  for (let i = 0, n = ring.length - 1; i < n; i++) {
+    area += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1];
+  }
+  return Math.abs(area / 2);
+}
+
+/**
+ * GeoJSON Feature の Polygon / MultiPolygon から最大面積の外周 ring を返す。
+ * Leaflet 非依存の純粋関数。離島除外のための「本土 ring」抽出に使う。
+ *
+ * @returns {number[][] | null} ring (= [[lon, lat], ...]), なければ null
+ */
+export function pickMainlandRing(feature) {
+  const geom = feature?.geometry;
+  if (!geom) return null;
+  let rings;
+  if (geom.type === 'Polygon') {
+    rings = [geom.coordinates[0]];
+  } else if (geom.type === 'MultiPolygon') {
+    rings = geom.coordinates.map((poly) => poly[0]);
+  } else {
+    return null;
+  }
+  let bestArea = -1;
+  let bestRing = null;
+  for (const ring of rings) {
+    const area = ringArea(ring);
+    if (area > bestArea) {
+      bestArea = area;
+      bestRing = ring;
+    }
+  }
+  return bestRing;
+}
+
+/**
+ * ring の経緯度範囲を {minLat, maxLat, minLon, maxLon} で返す。純粋関数。
+ */
+export function ringExtent(ring) {
+  if (!ring || ring.length === 0) return null;
+  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+  for (const [lon, lat] of ring) {
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+    if (lon < minLon) minLon = lon;
+    if (lon > maxLon) maxLon = lon;
+  }
+  return { minLat, maxLat, minLon, maxLon };
+}
+
+/**
+ * Feature の MultiPolygon / Polygon から「最大面積の polygon」の bounds を返す。
+ *
+ * 離島（小笠原・北方領土・八重山等）を除いた「本土の bounds」を取るための関数。
+ * 単純な L.geoJSON(feature).getBounds() だと離島まで含めてしまい
+ * 関東で小笠原までフィットされて縮尺が無意味になる問題への対策。
+ */
+export function getMainlandBounds(feature) {
+  const ring = pickMainlandRing(feature);
+  if (!ring) return null;
+  const ext = ringExtent(ring);
+  if (!ext) return null;
+  return L.latLngBounds([[ext.minLat, ext.minLon], [ext.maxLat, ext.maxLon]]);
+}
+
+/**
+ * Feature 配列の本土 bounds を合成する（地方レベルで複数都道府県の本土部分を覆う bounds）。
+ */
+export function unionMainlandBounds(features) {
+  let union = null;
+  for (const f of features) {
+    const b = getMainlandBounds(f);
+    if (!b) continue;
+    union = union ? union.extend(b) : b;
+  }
+  return union;
+}
+
 export function setupHistoryScreen() {
   const back = document.querySelector(`#${HISTORY_SCREEN_ID} .history-back`);
   if (back) back.addEventListener('click', handleBack);
@@ -290,10 +374,21 @@ function renderLevel1() {
   }).addTo(historyMap);
 
   try {
-    const bounds = layer.getBounds();
-    if (bounds.isValid()) {
-      historyMap.setMaxBounds(bounds.pad(0.05));
-      historyMap.fitBounds(bounds, { padding: [20, 20] });
+    // 離島を含む getBounds() ではなく、本土だけの bounds を計算してフィット
+    const main = unionMainlandBounds(filtered.features);
+    const full = layer.getBounds();
+    if (main && main.isValid()) {
+      historyMap.fitBounds(main, { padding: [20, 20] });
+      // パン制限は離島も含めた full bounds に少し余裕を持たせて設定
+      // （離島の踏破済が将来描画される場合に備える）
+      if (full && full.isValid()) {
+        historyMap.setMaxBounds(full.pad(0.1));
+      } else {
+        historyMap.setMaxBounds(main.pad(0.3));
+      }
+    } else if (full && full.isValid()) {
+      historyMap.setMaxBounds(full.pad(0.05));
+      historyMap.fitBounds(full, { padding: [20, 20] });
     }
   } catch (_) { /* noop */ }
 }
@@ -323,10 +418,19 @@ async function renderLevel2() {
       interactive: false,
     });
     try {
-      const bounds = prefLayer.getBounds();
-      if (bounds.isValid()) {
-        historyMap.setMaxBounds(bounds.pad(0.05));
-        historyMap.fitBounds(bounds, { padding: [10, 10] });
+      // 離島を含む getBounds() ではなく、本土だけの bounds を採用
+      const main = getMainlandBounds(prefFeature);
+      const full = prefLayer.getBounds();
+      if (main && main.isValid()) {
+        historyMap.fitBounds(main, { padding: [10, 10] });
+        if (full && full.isValid()) {
+          historyMap.setMaxBounds(full.pad(0.1));
+        } else {
+          historyMap.setMaxBounds(main.pad(0.3));
+        }
+      } else if (full && full.isValid()) {
+        historyMap.setMaxBounds(full.pad(0.05));
+        historyMap.fitBounds(full, { padding: [10, 10] });
       }
     } catch (_) { /* noop */ }
     // 県境は最後に add してトップに見せる
