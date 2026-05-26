@@ -566,10 +566,11 @@ plan.md §13 / spec.md §14 で仕様確定。階層ズーミング UI（日本�
 - [x] click と tap 両方 listen で touch event にも対応
 - [x] **Phase 13-5（実機観測）**: 残タスク — iPhone 実機で当 E2E と同じ動線が動作するか確認
 
-### 未着手
+### 未着手（Claude 能力外、人間判断）
 
+- [ ] **Phase 13-5（実機タスク）**: 物理 iPhone Safari で履歴画面動線を確認。Claude は Playwright `chromium-iphone-emulated` で全動線 (履歴画面オープン / L0→L1 / L1→L2→L3 詳細モーダル) の動作保証済。実機固有問題（CSS / Touch event の WebKit 特有挙動）はてつてつ確認のみで発覚するため、最終確認は物理デバイス必須
+- [ ] **WebKit ローカル実行（任意）**: 実機の代わりに WebKit エンジンで E2E するには Linux 依存ライブラリが必要。`sudo apt install libsecret-1-0 libwoff2dec1 libx264-164 libavif16 ...` 等。sudo 不可の Claude 単独では実行不能。設定したい場合は `sudo npx playwright install-deps webkit` を 1 回実行すれば `--project=webkit-iphone` でテスト可能
 - [ ] 色階調 (10%/30%/60% 閾値) の実機調整（必要なら）
-- [ ] デプロイは main の最新（コミット `9bb0e91`）で完了済
 
 ## Issue #48: 陰影起伏図トグルを 3 段階（OFF/弱/強）に拡張（2026-05-21）
 

@@ -23,8 +23,6 @@ export default defineConfig({
   },
   projects: [
     {
-      // WebKit は Linux 依存ライブラリが必要なため Chromium で iPhone viewport を模倣
-      // 実 Safari ではないが PoC の E2E 検証には十分
       name: 'chromium-iphone-emulated',
       use: {
         browserName: 'chromium',
@@ -35,6 +33,21 @@ export default defineConfig({
         userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
         permissions: ['geolocation'],
         // 久喜市役所付近 (saitama)
+        geolocation: { latitude: 36.0640, longitude: 139.6691 },
+      },
+    },
+    {
+      // 実 iPhone Safari と同じエンジン (WebKit)。Linux 依存ライブラリが
+      // インストール済みでないと起動しないが、揃っていれば実機相当の検証ができる。
+      // 起動失敗時は --project=chromium-iphone-emulated で代替可能。
+      name: 'webkit-iphone',
+      use: {
+        browserName: 'webkit',
+        viewport: { width: 390, height: 844 },
+        deviceScaleFactor: 3,
+        isMobile: true,
+        hasTouch: true,
+        permissions: ['geolocation'],
         geolocation: { latitude: 36.0640, longitude: 139.6691 },
       },
     },
