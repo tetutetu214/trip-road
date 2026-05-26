@@ -67,7 +67,7 @@ export function rateForMunicipality(muniCode, conquests) {
  *   1-10%    → '#1f3a32' (薄緑)
  *   11-30%   → '#2e6651' (中緑)
  *   31-60%   → '#3f9876' (濃緑)
- *   61-100%  → '#5dcaa5' (最濃、軌跡と同色)
+ *   61-100%  → '#5dcaa5' (最濃、UI のミントグリーン基調)
  *
  * @param {number} rate - 0-1 の踏破率
  * @returns {string} 16 進カラーコード
