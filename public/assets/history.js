@@ -370,6 +370,45 @@ function renderLevel0() {
   exposeForE2E();
 }
 
+/**
+ * 指定 feature 配列の geometry を「穴 (hole)」として、外側を半透明の黒で覆う
+ * マスクポリゴンを map に追加する。
+ * 「県外/地方外を暗くする」ことで、PC ワイドビュー時に対象エリア以外の地理院
+ * クリーム色背景が目立つ問題を解消する。
+ *
+ * Leaflet Polygon は [outer, ...holes] 形式で外周 + 穴を表現できる。
+ * GeoJSON [lon, lat] → Leaflet [lat, lon] 変換も同時に行う。
+ * 大きな outer ring は日本全土を覆う矩形（lat 20-50 / lon 120-150）。
+ *
+ * @param {Array<{geometry: object}>} features
+ * @returns {L.Polygon | null}
+ */
+function addOutsideMask(features) {
+  if (!features || features.length === 0) return null;
+  const holes = [];
+  for (const feature of features) {
+    const geom = feature?.geometry;
+    if (!geom) continue;
+    if (geom.type === 'Polygon') {
+      holes.push(geom.coordinates[0].map(([lon, lat]) => [lat, lon]));
+    } else if (geom.type === 'MultiPolygon') {
+      for (const poly of geom.coordinates) {
+        holes.push(poly[0].map(([lon, lat]) => [lat, lon]));
+      }
+    }
+  }
+  if (holes.length === 0) return null;
+  const outerRing = [[20, 120], [50, 120], [50, 150], [20, 150], [20, 120]];
+  const mask = L.polygon([outerRing, ...holes], {
+    fillColor: '#0a0a0c',
+    fillOpacity: 0.7,
+    stroke: false,
+    interactive: false,  // クリックを下層 polygon に通す
+  });
+  mask.addTo(historyMap);
+  return mask;
+}
+
 // === レベル 1: 地方 → 都道府県 ===
 
 function renderLevel1() {
@@ -383,6 +422,9 @@ function renderLevel1() {
       f => f.properties.region_code === currentRegion,
     ),
   };
+
+  // 地方外を暗くマスク（PC ワイド表示で他地方のクリーム色背景が目立つ問題対策）
+  addOutsideMask(filtered.features);
   const conquered = conquests.filter(c => c.region_code === currentRegion).length;
   const total = filtered.features.reduce(
     (sum, f) => sum + (f.properties.muni_count ?? 0), 0,
@@ -447,6 +489,8 @@ async function renderLevel2() {
   const prefFeature = prefectureGeo.features.find(
     f => f.properties.prefecture_code === currentPrefecture,
   );
+  // 県外を暗くマスク（クリーム色の他県背景を隠す）
+  if (prefFeature) addOutsideMask([prefFeature]);
   const prefName = prefFeature?.properties.name ?? currentPrefecture;
   setTitle(prefName);
 
