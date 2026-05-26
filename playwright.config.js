@@ -51,5 +51,18 @@ export default defineConfig({
         geolocation: { latitude: 36.0640, longitude: 139.6691 },
       },
     },
+    {
+      // PC ワイド画面 (Chromium) での検証用。履歴画面が PC で開かれる
+      // ケースで viewport が広いことに起因するレイアウト問題を再現する。
+      name: 'desktop-chromium',
+      use: {
+        browserName: 'chromium',
+        viewport: { width: 1456, height: 819 },
+        isMobile: false,
+        hasTouch: false,
+        permissions: ['geolocation'],
+        geolocation: { latitude: 36.0640, longitude: 139.6691 },
+      },
+    },
   ],
 });

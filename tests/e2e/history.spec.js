@@ -291,6 +291,28 @@ test.describe('踏破履歴ビュー E2E', () => {
     await expect(page.locator('#history-detail')).toBeVisible({ timeout: 3000 });
     await expect(page.locator('#history-detail')).toContainText(muniCenter.name);
 
+    // モーダル実際の表示状態を診断
+    const modalState = await page.evaluate(() => {
+      const el = document.getElementById('history-detail');
+      if (!el) return 'no element';
+      const cs = getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      const card = el.firstElementChild;
+      const cardRect = card?.getBoundingClientRect();
+      return {
+        display: cs.display,
+        visibility: cs.visibility,
+        opacity: cs.opacity,
+        zIndex: cs.zIndex,
+        position: cs.position,
+        rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
+        cardRect: cardRect ? { x: cardRect.x, y: cardRect.y, w: cardRect.width, h: cardRect.height } : null,
+        innerHTMLLen: el.innerHTML.length,
+        bgColor: cs.backgroundColor,
+      };
+    });
+    console.log('MODAL STATE:', JSON.stringify(modalState, null, 2));
+
     await page.screenshot({ path: 'tests/e2e/results/history-03-detail-modal.png' });
   });
 });

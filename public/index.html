@@ -113,8 +113,10 @@
   <div id="history-map" class="history-map"></div>
   <div class="history-loading" style="display:none;">読み込み中…</div>
   <div class="history-error" style="display:none;"></div>
-  <div id="history-detail" class="history-detail" style="display:none;"></div>
 </section>
+<!-- 詳細モーダル (#history-detail) は history.js の renderLevel3 で動的生成し、
+     body 直下に配置する。#history-screen の中に置くと stacking context の
+     都合で画面上に描画されない不具合がある（PC ワイド検証で確認）。 -->
 
 <!-- Leaflet JS (CDN) -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
