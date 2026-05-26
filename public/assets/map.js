@@ -34,8 +34,11 @@ export function initMap(containerId) {
   marker = L.marker([35.5, 138], { icon });
   // 初期位置では add しない（GPS 取得後に add）
 
+  // 地理院 pale 地図の「緑色の高速道路」「灰色の地形/等高線」と
+  // 軌跡が被って見にくい問題への対応で、補色のマゼンタに変更（2026-05-26）。
+  // UI ブランド色のミントグリーン (#5dcaa5) は履歴画面・現在地マーカー側に残す。
   trackLine = L.polyline([], {
-    color: '#5dcaa5',
+    color: '#ff4d8c',
     weight: 3,
     opacity: 0.9,
     lineCap: 'round',
