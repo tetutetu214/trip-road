@@ -291,11 +291,13 @@ function clearLayers() {
  * isSelected=true のときは強調ボーダー。
  */
 function styleForRate(rate, isSelected = false) {
+  // 縁取りは黄色 (#ffd866)。塗りつぶしのミントグリーン階調と補色関係になるので
+  // 境界線がはっきり浮き出る。選択時は白に切替えて差別化。
   return {
     fillColor: colorForRate(rate),
     fillOpacity: isSelected ? 0.9 : 0.7,
-    color: isSelected ? '#ffffff' : '#5dcaa5',
-    weight: isSelected ? 3 : 1,
+    color: isSelected ? '#ffffff' : '#ffd866',
+    weight: isSelected ? 3 : 1.5,
   };
 }
 
@@ -569,7 +571,7 @@ async function renderLevel2() {
     if (!conqueredSet.has(item.muniCode)) continue;
     const conquest = prefConquests.find(c => c.muni_code === item.muniCode);
     const geoLayer = L.geoJSON(item.geo, {
-      style: { fillColor: '#5dcaa5', fillOpacity: 0.75, color: '#9fe1cb', weight: 1 },
+      style: { fillColor: '#5dcaa5', fillOpacity: 0.75, color: '#ffd866', weight: 1.5 },
       onEachFeature: (_f, layer) => {
         layer.on('click', (e) => {
           debugMsg(`tap ${item.muniCode} ${conquest?.name ?? '?'}`);
