@@ -491,8 +491,10 @@ async function renderLevel2() {
   const prefFeature = prefectureGeo.features.find(
     f => f.properties.prefecture_code === currentPrefecture,
   );
-  // 県外を暗くマスク（クリーム色の他県背景を隠す）
-  if (prefFeature) addOutsideMask([prefFeature]);
+  // 県外を暗くマスク（暫定: 粗い prefFeature で fetch 中の暗転を入れる）。
+  // 市町村 polygon の fetch 完了後に詳細マスクに置き換える。
+  let tempMask = null;
+  if (prefFeature) tempMask = addOutsideMask([prefFeature]);
   const prefName = prefFeature?.properties.name ?? currentPrefecture;
   setTitle(prefName);
 
@@ -547,6 +549,14 @@ async function renderLevel2() {
       return null;
     }
   }));
+
+  // 暫定の粗マスクを削除し、市町村 polygon の集約で詳細マスクに置き換える。
+  // 県境のジャギ（preprocess の tolerance 0.05 度起因の粗形）が消える。
+  if (tempMask) historyMap.removeLayer(tempMask);
+  const muniFeaturesForMask = fetched
+    .filter((item) => item && item.geo?.features?.[0]?.geometry)
+    .map((item) => ({ geometry: item.geo.features[0].geometry }));
+  addOutsideMask(muniFeaturesForMask);
 
   // Leaflet の同レイヤー内では「後から add した path が DOM 上で前面」になり、
   // タップ判定はその前面要素が優先される。並列 fetch で add 順がランダムだと
