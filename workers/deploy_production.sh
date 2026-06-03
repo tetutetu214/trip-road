@@ -31,6 +31,17 @@ echo "--- ALLOWED_ORIGIN を登録（Plan C のフロント URL 想定） ---"
 printf '%s' "$ALLOWED_ORIGIN_PROD" | wrangler secret put ALLOWED_ORIGIN
 echo ""
 
+# Mapbox 公開トークン（メイン地図用）。~/.secrets/trip-road.env の MAPBOX_TOKEN を
+# パイプで渡す（対話入力だと空値で確定する事故があったため必ず stdin 経由）。
+if [ -n "${MAPBOX_TOKEN:-}" ]; then
+  echo "--- MAPBOX_TOKEN を登録 ---"
+  printf '%s' "$MAPBOX_TOKEN" | wrangler secret put MAPBOX_TOKEN
+  echo ""
+else
+  echo "警告: MAPBOX_TOKEN が未設定です（~/.secrets/trip-road.env に追記してください）。メイン地図が表示されません。"
+  echo ""
+fi
+
 echo "=== 2. 登録済 Secrets 一覧 ==="
 wrangler secret list
 echo ""
