@@ -589,6 +589,25 @@ Issue #46 の opacity 0.3 は控えめという実機フィードバックを受
 
 ---
 
+## Mapbox GL JS 移行（メイン地図）（2026-06-03）
+
+地理院タイル+Leaflet のメイン地図を Mapbox GL JS v3（Standard スタイル）に移行。見やすさ向上が目的。履歴画面は Leaflet 据え置き（コロプレスが Leaflet 依存で作り直しになるため、まずメイン地図のみ先行移行と判断）。
+
+- [x] Worker に `GET /api/mapbox-token`（認証付き）を追加し `env.MAPBOX_TOKEN` を配布
+- [x] `api.js` に `getMapboxToken(password)` を追加
+- [x] `map.js` を Mapbox GL JS v3 に全面書き換え（Standard、lightPreset 時間連動、現在地マーカー、軌跡 GeoJSON source+line layer、hillshade=raster-dem、resize→map.resize()）
+- [x] `app.js` をトークン取得→`initMap('map', token)` に変更
+- [x] `index.html` に mapbox-gl v3.9.0 CDN を追加（Leaflet 併存）、メイン画面の手動 `.map-attribution`（地理院）を削除
+- [x] `app.css` に Mapbox コンテナ背景＋attribution/ロゴを前面表示（規約上非表示にしない）
+- [x] `lightPresetForHour` の単体テスト追加（Vitest、全 127 件 pass）
+- [x] **てつてつ手動**: Mapbox アカウント作成→pk トークン発行→URL 制限設定→secret 登録
+- [x] Worker 本番デプロイ（`/api/mapbox-token` 検証済: 認証200/未認証401/POST405、pk 90文字）
+- [x] Pages 本番デプロイ（`deploy_frontend.sh`、独自ドメイン HTTP 200、HTML に mapbox-gl v3.9.0 反映確認）
+- [x] 実機で滑らかな地図表示を確認（2026-06-03 夜、ヌルッと動く＝core 成功）
+- [ ] **明日（昼）に観察**: 移動時の軌跡が伸びるか、時間連動で昼の明るい表示になるか
+- [ ] **陰影が見えない問題を修正**: Standard の不透明な地面の下（slot:'bottom'）に hillshade を敷いたため隠れている疑い。`setTerrain`（本物の3D地形、exaggeration を off/弱/強に割当）方式へ切替え、昼に検証
+- [ ] PR 作成・マージ（保留 or 先行は要相談）
+
 ### さらに先（無時系列、検討候補）
 
 - [ ] Service Worker によるオフライン対応

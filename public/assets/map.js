@@ -1,64 +1,144 @@
 /**
- * Leaflet 初期化、現在地マーカー、軌跡ポリラインの管理。
- * Leaflet は index.html で CDN 読込の global `L` を使う。
+ * Mapbox GL JS v3 によるメイン地図。
+ * 現在地マーカー、軌跡ライン、陰影起伏図トグルを管理する。
+ * mapboxgl は index.html で CDN 読込した global を使う。
+ *
+ * 地理院タイル + Leaflet からの移行（2026-06-03）。履歴画面（history.js）は
+ * 引き続き Leaflet を使うため、両ライブラリが併存する。
+ *
+ * 座標順の注意: Mapbox / GeoJSON は [lng, lat]（経度・緯度の順）。
+ * アプリ内部の track は {lat, lon} なので、Mapbox に渡すときは必ず
+ * [lon, lat] に並べ替える。
  */
-import { TILE_URL, HILLSHADE_TILE_URL } from './config.js';
+const STANDARD_STYLE = 'mapbox://styles/mapbox/standard';
+const INITIAL_CENTER = [138, 35.5]; // [lng, lat]
+const INITIAL_ZOOM = 5;
+const FIRST_FIX_ZOOM = 14;
 
 let map = null;
 let marker = null;
-let trackLine = null;
-let hillshadeLayer = null;
+let markerAdded = false;
+let styleLoaded = false;
+// 軌跡の座標は常に JS 側で保持する（[lng, lat] の配列）。
+// style.load 前に setTrack/addTrackPoint が来てもここに溜め、ロード後に反映する。
+let trackCoords = [];
+// style.load 前に来た現在地更新を保留する。
+let pendingLocation = null;
+// 現在の陰影レベル（'off'/'weak'/'strong'）。
+let hillshadeLevel = 'off';
 
-export function initMap(containerId) {
-  map = L.map(containerId, {
-    center: [35.5, 138],
-    zoom: 5,
-    zoomControl: false,
-    attributionControl: false,
+/**
+ * 端末の現在時刻から Standard スタイルの lightPreset を決める。
+ * 明け方 / 昼 / 夕暮れ / 夜の 4 段階で地図全体の照明・影が変わる。
+ */
+export function lightPresetForHour(hour) {
+  if (hour < 5) return 'night';
+  if (hour < 8) return 'dawn';
+  if (hour < 17) return 'day';
+  if (hour < 19) return 'dusk';
+  return 'night';
+}
+
+// 陰影起伏図の強度（hillshade-exaggeration）。'off' はレイヤー非表示。
+const HILLSHADE_EXAGGERATION = { off: 0, weak: 0.4, strong: 0.7 };
+
+function trackGeoJSON() {
+  return {
+    type: 'Feature',
+    geometry: { type: 'LineString', coordinates: trackCoords },
+    properties: {},
+  };
+}
+
+/**
+ * Mapbox 地図を初期化する。token は Workers 経由で取得した公開トークン(pk)。
+ */
+export function initMap(containerId, token) {
+  mapboxgl.accessToken = token;
+  map = new mapboxgl.Map({
+    container: containerId,
+    style: STANDARD_STYLE,
+    center: INITIAL_CENTER,
+    zoom: INITIAL_ZOOM,
+    attributionControl: true, // 規約上、出典表記は表示したまま
   });
-  L.tileLayer(TILE_URL, { maxZoom: 18, tileSize: 256 }).addTo(map);
 
-  // 陰影起伏図レイヤー。初期は add しない。setHillshadeEnabled で切替。
-  hillshadeLayer = L.tileLayer(HILLSHADE_TILE_URL, {
-    maxZoom: 18,
-    maxNativeZoom: 16,
-    opacity: 0.3,
-  });
-
-  // 現在地マーカー（SVG divIcon）
-  const iconHtml = `<svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+  // 現在地マーカー（mintグリーンの二重丸 SVG）。位置確定後に addTo する。
+  const el = document.createElement('div');
+  el.className = 'current-location-marker';
+  el.innerHTML = `<svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
     <circle cx="9" cy="9" r="7" stroke="#9fe1cb" stroke-width="1.2" fill="none"/>
     <circle cx="9" cy="9" r="2.5" fill="#9fe1cb"/>
   </svg>`;
-  const icon = L.divIcon({ html: iconHtml, className: 'current-location-marker', iconSize: [18, 18], iconAnchor: [9, 9] });
-  marker = L.marker([35.5, 138], { icon });
-  // 初期位置では add しない（GPS 取得後に add）
+  marker = new mapboxgl.Marker({ element: el });
 
-  // 地理院 pale 地図の「緑色の高速道路」「灰色の地形/等高線」と
-  // 軌跡が被って見にくい問題への対応で、補色のマゼンタに変更（2026-05-26）。
-  // UI ブランド色のミントグリーン (#5dcaa5) は履歴画面・現在地マーカー側に残す。
-  trackLine = L.polyline([], {
-    color: '#ff4d8c',
-    weight: 3,
-    opacity: 0.9,
-    lineCap: 'round',
-    lineJoin: 'round',
-  }).addTo(map);
+  // Standard スタイルの config 適用（lightPreset）とソース/レイヤー追加は
+  // スタイル読込完了後でないと反映されない。'load' ではなく 'style.load' を使う。
+  map.on('style.load', () => {
+    styleLoaded = true;
+
+    // 時間連動のライトプリセット
+    map.setConfigProperty('basemap', 'lightPreset', lightPresetForHour(new Date().getHours()));
+
+    // 陰影起伏図用の DEM ソースと hillshade レイヤー（初期は非表示）。
+    // 地図の地形感を出す。slot 'bottom' で道路・ラベルの下に置く。
+    if (!map.getSource('mapbox-dem')) {
+      map.addSource('mapbox-dem', {
+        type: 'raster-dem',
+        url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+        tileSize: 512,
+        maxzoom: 14,
+      });
+    }
+    if (!map.getLayer('hillshade')) {
+      map.addLayer({
+        id: 'hillshade',
+        type: 'hillshade',
+        source: 'mapbox-dem',
+        slot: 'bottom',
+        layout: { visibility: 'none' },
+        paint: { 'hillshade-exaggeration': HILLSHADE_EXAGGERATION.weak },
+      });
+    }
+    applyHillshade();
+
+    // 軌跡ライン。地理院 pale 地図での視認性問題に倣い、補色のマゼンタ。
+    if (!map.getSource('track')) {
+      map.addSource('track', { type: 'geojson', data: trackGeoJSON() });
+    }
+    if (!map.getLayer('track-line')) {
+      map.addLayer({
+        id: 'track-line',
+        type: 'line',
+        source: 'track',
+        slot: 'top',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#ff4d8c', 'line-width': 3, 'line-opacity': 0.9 },
+      });
+    }
+
+    // style.load 前に来ていた現在地更新があれば反映する。
+    if (pendingLocation) {
+      const { lat, lon, isFirst } = pendingLocation;
+      pendingLocation = null;
+      updateCurrentLocation(lat, lon, isFirst);
+    }
+  });
 
   // 最小化→復帰や画面回転・リサイズ時に地図サイズを再計算する。
   // iOS Safari でバックグラウンド復帰時に viewport が一時的にずれて、
   // .map のレイアウトが崩れて上部チップが地図に隠れる現象への対策。
   const refreshSize = () => {
     if (!map) return;
-    // CSS の再計算が完了してから invalidateSize を呼ぶため少し遅延
-    setTimeout(() => map.invalidateSize(), 100);
+    // CSS の再計算が完了してから resize を呼ぶため少し遅延
+    setTimeout(() => map.resize(), 100);
   };
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) refreshSize();
   });
   window.addEventListener('pageshow', refreshSize);
   window.addEventListener('resize', () => {
-    if (map) map.invalidateSize();
+    if (map) map.resize();
   });
   window.addEventListener('orientationchange', refreshSize);
 
@@ -70,7 +150,7 @@ export function initMap(containerId) {
     const ro = new ResizeObserver(() => {
       const h = card.offsetHeight;
       document.documentElement.style.setProperty('--card-height', `${h}px`);
-      if (map) map.invalidateSize();
+      if (map) map.resize();
     });
     ro.observe(card);
   }
@@ -83,43 +163,60 @@ export function initMap(containerId) {
  */
 export function updateCurrentLocation(lat, lon, isFirst = false) {
   if (!map || !marker) return;
-  marker.setLatLng([lat, lon]);
-  if (!marker._map) marker.addTo(map);
-  const zoom = isFirst ? 14 : map.getZoom();
-  map.setView([lat, lon], zoom, { animate: true, duration: 0.3 });
+  // スタイル未ロード時は保留し、style.load 後に適用する。
+  if (!styleLoaded) {
+    pendingLocation = { lat, lon, isFirst };
+    return;
+  }
+  marker.setLngLat([lon, lat]);
+  if (!markerAdded) {
+    marker.addTo(map);
+    markerAdded = true;
+  }
+  const zoom = isFirst ? FIRST_FIX_ZOOM : map.getZoom();
+  map.easeTo({ center: [lon, lat], zoom, duration: 300 });
 }
 
 export function addTrackPoint(lat, lon) {
-  if (!trackLine) return;
-  trackLine.addLatLng([lat, lon]);
+  trackCoords.push([lon, lat]);
+  const source = map && map.getSource('track');
+  if (source) source.setData(trackGeoJSON());
 }
 
 export function setTrack(points) {
-  if (!trackLine) return;
-  trackLine.setLatLngs(points.map(p => [p.lat, p.lon]));
+  trackCoords = points.map(p => [p.lon, p.lat]);
+  const source = map && map.getSource('track');
+  if (source) source.setData(trackGeoJSON());
 }
 
 /**
- * 地図上の軌跡ポリラインを空にする。
+ * 地図上の軌跡ラインを空にする。
  * localStorage 側の track は変更しない（履歴データは温存）。
  */
 export function clearTrack() {
-  if (!trackLine) return;
-  trackLine.setLatLngs([]);
+  trackCoords = [];
+  const source = map && map.getSource('track');
+  if (source) source.setData(trackGeoJSON());
+}
+
+/**
+ * hillshade レイヤーへ現在の hillshadeLevel を反映する。
+ */
+function applyHillshade() {
+  if (!map || !map.getLayer('hillshade')) return;
+  const exaggeration = HILLSHADE_EXAGGERATION[hillshadeLevel] ?? 0;
+  if (exaggeration === 0) {
+    map.setLayoutProperty('hillshade', 'visibility', 'none');
+    return;
+  }
+  map.setPaintProperty('hillshade', 'hillshade-exaggeration', exaggeration);
+  map.setLayoutProperty('hillshade', 'visibility', 'visible');
 }
 
 /**
  * 陰影起伏図レイヤーのレベル切替（Issue #48: off / weak / strong）。
- * off ならレイヤーを map から外し、weak/strong なら opacity を切替えて add。
  */
-const HILLSHADE_OPACITY = { off: 0, weak: 0.4, strong: 0.7 };
 export function setHillshadeLevel(level) {
-  if (!map || !hillshadeLayer) return;
-  const op = HILLSHADE_OPACITY[level] ?? 0;
-  if (op === 0) {
-    if (map.hasLayer(hillshadeLayer)) map.removeLayer(hillshadeLayer);
-    return;
-  }
-  hillshadeLayer.setOpacity(op);
-  if (!map.hasLayer(hillshadeLayer)) hillshadeLayer.addTo(map);
+  hillshadeLevel = level;
+  applyHillshade();
 }

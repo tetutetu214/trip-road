@@ -1214,6 +1214,12 @@ LLM 自動生成を保ったまま品質を上げる。手作業による解説�
 
 `~/.claude/CLAUDE.md` の理解度テストハーネスで、てつてつが理解を確認した概念を日付つきで記録する。次回以降、同じ概念に関する実装の前のテストはスキップ判定に使う。
 
+### 2026-06-03 Mapbox GL JS 移行（メイン地図）着手前テスト
+
+- **ベクタータイルの本質**: ベクタータイルは「道路はここ」という座標・形状データと描画ルールを送り、端末の GPU(WebGL) がリアルタイムに描画する。だから任意の拡大率・角度で再描画でき、ヌルッとした拡大縮小・地図の傾き・3D表示が可能になる。ラスタタイル（地理院）は描画済み PNG 画像を配るだけなので、これらができない。解像度の高さやキャッシュ・CDN の近さが理由ではない
+- **Leaflet と Mapbox GL JS のスタイリングモデルの違い**: Leaflet はポリゴンを1つずつ add して style を命令的に指定する。Mapbox GL JS は「データ(source)」と「踏破率に応じた色ルール(layer の式)」を分離して宣言する、データ駆動スタイル。考え方が根本的に違うため、history.js のコロプレスは API 関数名の置換では済まず作り直しになる（だからメイン地図のみ先行移行と判断）
+- **地理院 → Mapbox の採用コスト（捨てる/増えるもの）**: 見た目の向上と引き換えに、Mapbox という民間サービスへの依存（無料枠50,000ロード/月・利用規約）、出典ロゴと attribution の常時表示義務（地理院は CSS で隠していたが Mapbox は規約上消せない）、公開トークン(pk)の URL 制限・ローテという運用が新たに発生する。GPS 精度低下や固定課金が発生するわけではない（個人利用は無料枠内）
+
 ### 2026-05-05 F-1.3b 着手前テスト
 
 - **RAG（Retrieval-Augmented Generation）の本質**: LLM の学習データに含まれない、または不確かな事実を、外部の検索結果や参照資料で補強する仕組み。応答速度・コスト削減・出力長制限のためではなく、知識限界の補完が目的
@@ -1995,7 +2001,24 @@ iPhone Safari メモリ予算（~1 GB）内に十分収まる。Cloudflare Pages
 - speed-mater: https://github.com/tetutetu214/speed-mater（GPS取得ロジックの元）
 
 ### 5.3 使用OSS
-- Leaflet.js 1.9.4（BSD-2-Clause）: https://github.com/Leaflet/Leaflet
+- Mapbox GL JS v3（メイン地図、商用ライブラリ・無料枠あり）: https://docs.mapbox.com/mapbox-gl-js/
+- Leaflet.js 1.9.4（BSD-2-Clause、履歴画面）: https://github.com/Leaflet/Leaflet
 - Turf.js booleanPointInPolygon（MIT）: https://github.com/Turfjs/turf
 - geopandas（BSD-3-Clause）
 - shapely（BSD-3-Clause）
+
+## 6. Mapbox GL JS 移行（メイン地図）（2026-06-03）
+
+地理院タイル+Leaflet のメイン地図を Mapbox GL JS v3（Standard）へ移行。きっかけは「地理院より見やすそう」というてつてつの要望。
+
+### 設計判断
+- **スコープをメイン地図に限定**: 履歴画面（history.js）のコロプレスは `L.geoJSON` の命令的スタイル・マスク・本土 fitBounds・タップ階層遷移が Leaflet に深く依存し、Mapbox GL JS のデータ駆動スタイル（source+layer+式）へ移すと実質作り直し＋E2E 6件の書き直しになる。見やすさの主目的はライブのメイン地図なので、メインのみ先行移行・Leaflet 併存とした（両ライブラリ同時読込のコストは個人 PWA では許容）。
+- **トークン配布**: 公開トークン(pk)でも、リポジトリがパブリックで Push Protection があるため直書きを避け、Workers Secret `MAPBOX_TOKEN` に置き `GET /api/mapbox-token`（authenticate() 経由）でログイン済みクライアントにだけ渡す。pk の主リスクは「タダ乗りで無料枠消費」だけなので、Mapbox 管理画面の URL 制限（trip-road ドメイン）＋いつでも再発行で十分管理可能。秘密トークン(sk)はフロントに出さない。
+- **スタイルと時間連動**: Standard スタイル＋`setConfigProperty('basemap','lightPreset', …)` で端末時刻から dawn/day/dusk/night を自動切替。スタイルは1枚のまま照明だけ変えるので滑らか＆map load カウントが増えない（スタイル丸ごと差し替え方式は再読込でカウント増・軌跡レイヤー貼り直しが必要なので不採用）。
+
+### ハマりどころ・要注意
+- **座標順が逆**: Mapbox / GeoJSON は `[lng, lat]`。アプリ内部の track は `{lat, lon}` なので必ず `[lon, lat]` に並べ替える。Leaflet の `[lat, lon]` 感覚のままだと日本がアフリカ沖に飛ぶ。
+- **初期化タイミング**: source/layer 追加と `setConfigProperty`（lightPreset）は `map.on('style.load')` の中で行う。`'load'` ではなく `'style.load'`（Standard の config 適用に必要）。GPS 初回 fix が地図ロードより先に来てもクラッシュしないよう、現在地は `pendingLocation` に、軌跡は `trackCoords` 配列に保持して style.load 後に反映する設計。
+- **attribution は消せない**: Mapbox の出典表記・ロゴは利用規約で必須。地理院時代は CSS で隠していたが Mapbox では非表示禁止。`.mapboxgl-ctrl-bottom-*` を下部カードより前面(z-index)に出して見えるようにした。
+- **invalidateSize→resize**: Leaflet の `map.invalidateSize()` は Mapbox では `map.resize()`。iOS Safari の復帰・回転対策のリサイズ処理はそのまま移植。
+- **陰影起伏図**: 地理院 hillshade タイルの代わりに Mapbox の raster-dem（mapbox.mapbox-terrain-dem-v1）+ hillshade レイヤー。off/weak/strong を `hillshade-exaggeration`(0/0.4/0.7)とレイヤー可視性で切替。

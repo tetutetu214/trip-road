@@ -166,7 +166,24 @@ export default {
       return jsonResponse({ error: 'method_not_allowed' }, 405, allowedOrigin);
     }
 
-    // 5. それ以外は 404
+    // 5. /api/mapbox-token: Mapbox 公開トークン(pk)を認証済みクライアントに配布
+    // 公開トークンとはいえ、パブリックリポジトリに直書きせず Workers Secret で
+    // 管理し、ログイン済みの利用者にだけ渡すことで流出面を最小化する。
+    if (url.pathname === '/api/mapbox-token') {
+      if (request.method !== 'GET') {
+        return jsonResponse({ error: 'method_not_allowed' }, 405, allowedOrigin);
+      }
+      const auth = await authenticate(request, env, allowedOrigin);
+      if (!auth.ok) return auth.response;
+
+      const token = env.MAPBOX_TOKEN || '';
+      if (!token) {
+        return jsonResponse({ error: 'server_misconfigured' }, 500, allowedOrigin);
+      }
+      return jsonResponse({ token }, 200, allowedOrigin);
+    }
+
+    // 6. それ以外は 404
     return jsonResponse({ error: 'not_found' }, 404, allowedOrigin);
   },
 };

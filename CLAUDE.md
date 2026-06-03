@@ -11,7 +11,8 @@ GPS ベースの旅ガイド Webアプリ。電車・徒歩移動中に iPhone S
 ## 2. 技術スタック
 
 - **フロントエンド**: Vanilla JS + HTML + CSS
-- **地図**: Leaflet.js 1.9.4（背景は地理院タイル 淡色地図）
+- **地図（メイン画面）**: Mapbox GL JS v3（Standard スタイル、端末時刻で lightPreset を dawn/day/dusk/night 自動切替。2026-06-03 に地理院タイル+Leaflet から移行）
+- **地図（履歴画面）**: Leaflet.js 1.9.4（背景は地理院タイル 淡色地図。コロプレスが Leaflet 依存のため未移行）
 - **空間演算**: Turf.js（booleanPointInPolygon のみ使用）
 - **バックエンド**: Cloudflare Workers（認証 + Bedrock Runtime プロキシ + Plan E Judge 統合）
 - **LLM (生成・Judge とも)**: **Amazon Bedrock Nova Pro**（`us.amazon.nova-pro-v1:0` cross-region inference profile） — Plan H で Anthropic Claude（Haiku 4.5 / Sonnet 4.6）から全面移行（2026-05-08）
@@ -32,6 +33,7 @@ GPS ベースの旅ガイド Webアプリ。電車・徒歩移動中に iPhone S
    - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION`（Bedrock Runtime + S3 共用、IAM ユーザー `trip-road-telemetry-writer`）
    - `S3_TELEMETRY_BUCKET`（テレメトリ Sink）
    - `ALLOWED_ORIGIN`（CORS 許可オリジン）
+   - `MAPBOX_TOKEN`（Mapbox 公開トークン pk。`/api/mapbox-token` で認証済みクライアントに配布）
    - 旧 `ANTHROPIC_API_KEY` は Plan H で削除済
 - **外部 API**:
    - Amazon Bedrock Runtime: Workers から SigV4 署名で Converse API 呼出（aws4fetch、modelId は `us.amazon.nova-pro-v1:0` cross-region inference profile）
@@ -98,6 +100,7 @@ cd workers && wrangler secret put AWS_SECRET_ACCESS_KEY
 cd workers && wrangler secret put AWS_REGION
 cd workers && wrangler secret put S3_TELEMETRY_BUCKET
 cd workers && wrangler secret put ALLOWED_ORIGIN
+cd workers && wrangler secret put MAPBOX_TOKEN
 # 旧 ANTHROPIC_API_KEY は Plan H 本番反映後に削除：
 # cd workers && wrangler secret delete ANTHROPIC_API_KEY
 
@@ -139,7 +142,9 @@ wrangler pages deploy public/ --project-name=trip-road
 
 アプリ画面または `docs/credits.md` に以下を明示：
 
-- 「地理院タイル」
+- © Mapbox / © OpenStreetMap（メイン地図。Mapbox GL JS が組込みの attribution で自動表示。CSS で消さない）
+- 「地理院タイル」（履歴画面の背景）
 - 「国土数値情報（行政区域データ）（国土交通省）を加工して作成」
-- Leaflet.js（BSD-2-Clause）
+- Mapbox GL JS（メイン地図ライブラリ）
+- Leaflet.js（BSD-2-Clause、履歴画面）
 - Turf.js（MIT）

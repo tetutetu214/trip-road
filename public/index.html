@@ -11,7 +11,10 @@
 <link rel="manifest" href="/manifest.json">
 <title>trip-road</title>
 
-<!-- Leaflet CSS (CDN) -->
+<!-- Mapbox GL JS CSS (CDN) — メイン地図 -->
+<link rel="stylesheet" href="https://api.mapbox.com/mapbox-gl-js/v3.9.0/mapbox-gl.css">
+
+<!-- Leaflet CSS (CDN) — 履歴画面 -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
       crossorigin=""/>
@@ -49,9 +52,8 @@
     </div>
   </div>
 
-  <!-- 地図エリア -->
+  <!-- 地図エリア（メインは Mapbox。出典・ロゴは Mapbox 組込みの attribution が表示する） -->
   <div id="map" class="map"></div>
-  <div class="map-attribution">出典：地理院タイル</div>
 
   <!-- 下部カード -->
   <div class="bottom-card">
@@ -118,7 +120,10 @@
      body 直下に配置する。#history-screen の中に置くと stacking context の
      都合で画面上に描画されない不具合がある（PC ワイド検証で確認）。 -->
 
-<!-- Leaflet JS (CDN) -->
+<!-- Mapbox GL JS (CDN) — メイン地図 -->
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.9.0/mapbox-gl.js"></script>
+
+<!-- Leaflet JS (CDN) — 履歴画面 -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
         crossorigin=""></script>

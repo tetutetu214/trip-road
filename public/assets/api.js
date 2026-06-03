@@ -179,6 +179,46 @@ export async function getConquests(password, opts = {}) {
 }
 
 /**
+ * Mapbox 公開トークンを Workers `/api/mapbox-token` から GET する。
+ * メイン地図（Mapbox GL JS）初期化に必要。トークンはリポジトリに置かず
+ * Workers Secret で管理し、認証済みクライアントにだけ渡す設計。
+ *
+ * @param {string} password
+ * @param {{timeoutMs?: number}} [opts]
+ * @returns {Promise<{ok: true, token: string} | {ok: false, status: number, error: string}>}
+ */
+export async function getMapboxToken(password, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? 5000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/mapbox-token`, {
+      method: 'GET',
+      headers: { 'X-App-Password': password },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (res.status === 401) {
+      return { ok: false, status: 401, error: 'unauthorized' };
+    }
+    if (!res.ok) {
+      return { ok: false, status: res.status, error: 'upstream_error' };
+    }
+    const data = await res.json();
+    if (!data.token) {
+      return { ok: false, status: res.status, error: 'empty_token' };
+    }
+    return { ok: true, token: data.token };
+  } catch (e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') {
+      return { ok: false, status: 0, error: 'timeout' };
+    }
+    return { ok: false, status: 0, error: String(e) };
+  }
+}
+
+/**
  * テレメトリバッチを Workers `/api/telemetry` に送る。
  * 失敗時は 1 回だけリトライ（2 秒後）。
  */
