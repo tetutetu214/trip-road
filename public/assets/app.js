@@ -24,7 +24,7 @@ import {
   getUnsyncedVisitedBefore,
   markVisitedSynced,
 } from './storage.js';
-import { fetchDescription, sendTelemetryBatch, postConquests } from './api.js';
+import { fetchDescription, sendTelemetryBatch, postConquests, getMapboxToken } from './api.js';
 import { setupHistoryScreen, openHistoryScreen } from './history.js';
 import { DATA_BASE_URL } from './config.js';
 import { identifyMunicipality, prefetchNeighbors } from './muni.js';
@@ -115,7 +115,15 @@ function setupPasswordScreen() {
 // === メイン画面初期化 ===
 async function enterMainApp(password) {
   showMainScreen();
-  initMap('map');
+  // Mapbox トークンを Worker から取得してから地図を初期化する。
+  // 取得失敗時は地図初期化をスキップし、アプリ全体はクラッシュさせない
+  // （現在地チップや土地のたよりなど地図以外の機能は引き続き動く）。
+  const tokenResult = await getMapboxToken(password);
+  if (tokenResult.ok) {
+    initMap('map', tokenResult.token);
+  } else {
+    console.warn('[app] Mapbox トークン取得に失敗、地図初期化をスキップ', tokenResult);
+  }
   setVisitedCount(getVisitedCount());
 
   // 既存軌跡を復元（今日の ts のものだけ描画。過去日分は localStorage に温存）

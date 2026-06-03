@@ -589,6 +589,23 @@ Issue #46 の opacity 0.3 は控えめという実機フィードバックを受
 
 ---
 
+## Mapbox GL JS 移行（メイン地図）（2026-06-03）
+
+地理院タイル+Leaflet のメイン地図を Mapbox GL JS v3（Standard スタイル）に移行。見やすさ向上が目的。履歴画面は Leaflet 据え置き（コロプレスが Leaflet 依存で作り直しになるため、まずメイン地図のみ先行移行と判断）。
+
+- [x] Worker に `GET /api/mapbox-token`（認証付き）を追加し `env.MAPBOX_TOKEN` を配布
+- [x] `api.js` に `getMapboxToken(password)` を追加
+- [x] `map.js` を Mapbox GL JS v3 に全面書き換え（Standard、lightPreset 時間連動、現在地マーカー、軌跡 GeoJSON source+line layer、hillshade=raster-dem、resize→map.resize()）
+- [x] `app.js` をトークン取得→`initMap('map', token)` に変更
+- [x] `index.html` に mapbox-gl v3.9.0 CDN を追加（Leaflet 併存）、メイン画面の手動 `.map-attribution`（地理院）を削除
+- [x] `app.css` に Mapbox コンテナ背景＋attribution/ロゴを前面表示（規約上非表示にしない）
+- [x] `lightPresetForHour` の単体テスト追加（Vitest、全 127 件 pass）
+- [ ] **てつてつ手動**: Mapbox アカウント作成→pk トークン発行→URL 制限設定→`wrangler secret put MAPBOX_TOKEN`
+- [ ] ローカル実トークンで表示確認（`npm run serve` or `wrangler pages dev`）
+- [ ] Worker デプロイ（`workers/deploy_production.sh`）+ Pages デプロイ（`deploy_frontend.sh`）
+- [ ] 実機 iPhone で時間連動・軌跡・陰影トグルを観察
+- [ ] PR 作成・マージ
+
 ### さらに先（無時系列、検討候補）
 
 - [ ] Service Worker によるオフライン対応

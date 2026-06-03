@@ -178,15 +178,16 @@ body {
   bottom: var(--card-height);
   background: var(--color-bg-map);
 }
-.map-attribution {
-  position: absolute;
-  bottom: calc(var(--card-height) + 12px);
-  right: 12px;
-  background: rgba(22,22,24,0.9);
-  padding: 4px 8px;
-  border-radius: 6px;
-  font-size: 9px;
-  color: var(--color-text-hint);
+/* Mapbox のキャンバス背景（タイル読込前のちらつき防止） */
+#map.mapboxgl-map,
+#map .mapboxgl-canvas {
+  background: var(--color-bg-map);
+}
+/* Mapbox の出典表記・ロゴは利用規約で必須なので非表示にしない。
+   #map の下端は下部カードの上端（--card-height）に一致するため、
+   コントロールはカードの直上に表示される。カードに隠れないよう前面に出す。 */
+.mapboxgl-ctrl-bottom-left,
+.mapboxgl-ctrl-bottom-right {
   z-index: 6;
 }
 
