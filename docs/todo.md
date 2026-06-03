@@ -600,11 +600,13 @@ Issue #46 の opacity 0.3 は控えめという実機フィードバックを受
 - [x] `index.html` に mapbox-gl v3.9.0 CDN を追加（Leaflet 併存）、メイン画面の手動 `.map-attribution`（地理院）を削除
 - [x] `app.css` に Mapbox コンテナ背景＋attribution/ロゴを前面表示（規約上非表示にしない）
 - [x] `lightPresetForHour` の単体テスト追加（Vitest、全 127 件 pass）
-- [ ] **てつてつ手動**: Mapbox アカウント作成→pk トークン発行→URL 制限設定→`wrangler secret put MAPBOX_TOKEN`
-- [ ] ローカル実トークンで表示確認（`npm run serve` or `wrangler pages dev`）
-- [ ] Worker デプロイ（`workers/deploy_production.sh`）+ Pages デプロイ（`deploy_frontend.sh`）
-- [ ] 実機 iPhone で時間連動・軌跡・陰影トグルを観察
-- [ ] PR 作成・マージ
+- [x] **てつてつ手動**: Mapbox アカウント作成→pk トークン発行→URL 制限設定→secret 登録
+- [x] Worker 本番デプロイ（`/api/mapbox-token` 検証済: 認証200/未認証401/POST405、pk 90文字）
+- [x] Pages 本番デプロイ（`deploy_frontend.sh`、独自ドメイン HTTP 200、HTML に mapbox-gl v3.9.0 反映確認）
+- [x] 実機で滑らかな地図表示を確認（2026-06-03 夜、ヌルッと動く＝core 成功）
+- [ ] **明日（昼）に観察**: 移動時の軌跡が伸びるか、時間連動で昼の明るい表示になるか
+- [ ] **陰影が見えない問題を修正**: Standard の不透明な地面の下（slot:'bottom'）に hillshade を敷いたため隠れている疑い。`setTerrain`（本物の3D地形、exaggeration を off/弱/強に割当）方式へ切替え、昼に検証
+- [ ] PR 作成・マージ（保留 or 先行は要相談）
 
 ### さらに先（無時系列、検討候補）
 
