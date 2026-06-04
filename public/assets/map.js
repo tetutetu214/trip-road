@@ -100,7 +100,14 @@ export function initMap(containerId, token) {
         source: 'mapbox-dem',
         slot: 'bottom',
         layout: { visibility: 'none' },
-        paint: { 'hillshade-exaggeration': HILLSHADE_EXAGGERATION.weak },
+        // hillshade-exaggeration の変更を即時反映（既定の約300msアニメを無効化）。
+        // OFF時は visibility:none にするだけで誇張値は前回値(strong=1.0)が残るため、
+        // 次の OFF→弱 表示時に 1.0→0.7 のアニメが走り「一瞬濃く→薄く」見えてしまう。
+        // duration:0 で値をスナップさせ、このちらつきを消す。
+        paint: {
+          'hillshade-exaggeration': HILLSHADE_EXAGGERATION.weak,
+          'hillshade-exaggeration-transition': { duration: 0 },
+        },
       });
     }
     applyHillshade();
