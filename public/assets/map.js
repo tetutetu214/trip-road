@@ -11,8 +11,10 @@
  * [lon, lat] に並べ替える。
  */
 const STANDARD_STYLE = 'mapbox://styles/mapbox/standard';
-const INITIAL_CENTER = [138, 35.5]; // [lng, lat]
-const INITIAL_ZOOM = 5;
+// 起動時は日本列島全体が収まる引きの画から始め、GPS 確定時に現在地へ
+// 一気に寄せる「ズームイン」の演出を出す。center は本州中央付近。
+const INITIAL_CENTER = [137.5, 37.5]; // [lng, lat]
+const INITIAL_ZOOM = 4;
 const FIRST_FIX_ZOOM = 14;
 
 let map = null;
@@ -40,7 +42,8 @@ export function lightPresetForHour(hour) {
 }
 
 // 陰影起伏図の強度（hillshade-exaggeration）。'off' はレイヤー非表示。
-const HILLSHADE_EXAGGERATION = { off: 0, weak: 0.4, strong: 0.7 };
+// 仕様上 0〜1 が上限。以前は weak0.4/strong0.7 で効果が薄かったため引き上げ。
+const HILLSHADE_EXAGGERATION = { off: 0, weak: 0.7, strong: 1.0 };
 
 function trackGeoJSON() {
   return {
@@ -113,7 +116,14 @@ export function initMap(containerId, token) {
         source: 'track',
         slot: 'top',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#ff4d8c', 'line-width': 3, 'line-opacity': 0.9 },
+        // line-emissive-strength: 1 で Standard の 3D 照明を無視し、
+        // 夜の lightPreset でもマゼンタのまま発光させる（夜に黒く沈む対策）。
+        paint: {
+          'line-color': '#ff4d8c',
+          'line-width': 3,
+          'line-opacity': 0.9,
+          'line-emissive-strength': 1,
+        },
       });
     }
 
@@ -173,8 +183,20 @@ export function updateCurrentLocation(lat, lon, isFirst = false) {
     marker.addTo(map);
     markerAdded = true;
   }
-  const zoom = isFirst ? FIRST_FIX_ZOOM : map.getZoom();
-  map.easeTo({ center: [lon, lat], zoom, duration: 300 });
+  if (isFirst) {
+    // 初回の位置確定: 日本全体の引きの画から現在地へ一気に寄る演出。
+    // flyTo は途中で一度引いてから寄る弧を描くので「ズームしていく」感が出る。
+    map.flyTo({
+      center: [lon, lat],
+      zoom: FIRST_FIX_ZOOM,
+      duration: 3500,
+      curve: 1.6,
+      essential: true, // prefers-reduced-motion でも実行（追従に必要なため）
+    });
+  } else {
+    // 2 回目以降は現在のズームを保ったまま中心だけ滑らかに追従。
+    map.easeTo({ center: [lon, lat], zoom: map.getZoom(), duration: 300 });
+  }
 }
 
 export function addTrackPoint(lat, lon) {

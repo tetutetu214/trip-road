@@ -2021,4 +2021,12 @@ iPhone Safari メモリ予算（~1 GB）内に十分収まる。Cloudflare Pages
 - **初期化タイミング**: source/layer 追加と `setConfigProperty`（lightPreset）は `map.on('style.load')` の中で行う。`'load'` ではなく `'style.load'`（Standard の config 適用に必要）。GPS 初回 fix が地図ロードより先に来てもクラッシュしないよう、現在地は `pendingLocation` に、軌跡は `trackCoords` 配列に保持して style.load 後に反映する設計。
 - **attribution は消せない**: Mapbox の出典表記・ロゴは利用規約で必須。地理院時代は CSS で隠していたが Mapbox では非表示禁止。`.mapboxgl-ctrl-bottom-*` を下部カードより前面(z-index)に出して見えるようにした。
 - **invalidateSize→resize**: Leaflet の `map.invalidateSize()` は Mapbox では `map.resize()`。iOS Safari の復帰・回転対策のリサイズ処理はそのまま移植。
-- **陰影起伏図**: 地理院 hillshade タイルの代わりに Mapbox の raster-dem（mapbox.mapbox-terrain-dem-v1）+ hillshade レイヤー。off/weak/strong を `hillshade-exaggeration`(0/0.4/0.7)とレイヤー可視性で切替。
+- **陰影起伏図**: 地理院 hillshade タイルの代わりに Mapbox の raster-dem（mapbox.mapbox-terrain-dem-v1）+ hillshade レイヤー。off/weak/strong を `hillshade-exaggeration` とレイヤー可視性で切替。`hillshade-exaggeration` の有効範囲は 0〜1（1 が上限）。
+
+### 6.1 移行後の見た目調整（2026-06-04）
+
+移行直後のメイン地図に対するてつてつの不満3点を修正。
+
+- **自前レイヤーが夜に黒く沈む（最重要・再発注意）**: Standard スタイルは3D照明（lightPreset）を地図全体にかける。`addLayer` で足した自前のレイヤー（軌跡ライン等）は、デフォルトだとこの照明の影響を受けるため、`lightPreset: night` だと指定色（マゼンタ `#ff4d8c`）でも黒く落ちる。`paint` に **`'line-emissive-strength': 1`** を付けると照明を無視してレイヤー自身の色で発光し、夜でもマゼンタのまま見える。0=照明に従う / 1=自前の色のみ。fill/circle/symbol にも同名の `*-emissive-strength` がある。今後 Standard 上に色付きレイヤーを足すときは必ず emissive-strength を検討する。
+- **起動時の画**: 以前は `center [138,35.5] / zoom 5`（関東全体）から GPS 確定で `easeTo` ズーム。日本全体（`center [137.5,37.5] / zoom 4`）始まりに変え、初回 fix を `flyTo`(duration 3500, curve 1.6) にして「日本全体→現在地へ寄る」演出にした。2回目以降の追従は従来どおり `easeTo` で現ズーム維持。
+- **陰影の誇張不足**: weak0.4/strong0.7 は効果が薄かったため weak0.7/strong1.0（上限）に引き上げ。デフォルトは off 据え置き（てつてつ判断）。
