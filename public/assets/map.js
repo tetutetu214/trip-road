@@ -11,11 +11,22 @@
  * [lon, lat] に並べ替える。
  */
 const STANDARD_STYLE = 'mapbox://styles/mapbox/standard';
-// 起動時は日本列島全体が収まる引きの画から始め、GPS 確定時に現在地へ
-// 一気に寄せる「ズームイン」の演出を出す。center は本州中央付近。
+// 起動時は宇宙から見た地球俯瞰の画から始め、GPS 確定時に現在地へ
+// 一気に寄せる「ズームイン」の演出を出す。center は本州中央付近で、
+// 地球上に日本が正面に来るようにする。
+// Standard スタイルは低ズームで自動的に globe（地球が丸く見える投影）になる。
+// INITIAL_ZOOM を下げるほど地球全体が画面に収まる。
 const INITIAL_CENTER = [137.5, 37.5]; // [lng, lat]
-const INITIAL_ZOOM = 4;
+const INITIAL_ZOOM = 1.2;
 const FIRST_FIX_ZOOM = 14;
+// GPS 初回確定までに自転で待たせる演出。これ以上寄ったら自転しない
+// （flyTo の途中で moveend が誤って自転を再開しないためのガード）。
+const SPIN_MAX_ZOOM = 5;
+// 地球が一周するのにかける秒数。大きいほどゆっくり回る。
+const SECONDS_PER_REVOLUTION = 180;
+// GPS がこの時間来なければ自転をやめ、日本列島スケールへフォールバックする(ms)。
+const GPS_FALLBACK_MS = 15000;
+const FALLBACK_ZOOM = 4;
 
 let map = null;
 let marker = null;
@@ -28,6 +39,10 @@ let trackCoords = [];
 let pendingLocation = null;
 // 現在の陰影レベル（'off'/'weak'/'strong'）。
 let hillshadeLevel = 'off';
+// 地球俯瞰の自転演出が有効か。GPS 初回確定 or ユーザー操作 or フォールバックで止める。
+let spinEnabled = false;
+// GPS が来ないときのフォールバック用タイマー ID。
+let fallbackTimer = null;
 
 /**
  * 端末の現在時刻から Standard スタイルの lightPreset を決める。
@@ -54,6 +69,32 @@ function trackGeoJSON() {
 }
 
 /**
+ * 地球をわずかに西へ回す。moveend で再帰的に呼ばれ続けることで
+ * 一定速度の自転になる（easeTo 完了 → moveend 発火 → 次の easeTo）。
+ * SPIN_MAX_ZOOM 以上に寄っている間は何もしない（flyTo 中の誤発火対策）。
+ */
+function spinGlobe() {
+  if (!spinEnabled || !map) return;
+  if (map.getZoom() >= SPIN_MAX_ZOOM) return;
+  const distancePerSecond = 360 / SECONDS_PER_REVOLUTION;
+  const center = map.getCenter();
+  center.lng -= distancePerSecond;
+  // easing を線形(n => n)にして等速回転にする。duration と回転量を合わせる。
+  map.easeTo({ center, duration: 1000, easing: (n) => n });
+}
+
+/**
+ * 自転を止める。GPS 確定・ユーザー操作・フォールバック時に呼ぶ。
+ */
+function stopSpin() {
+  spinEnabled = false;
+  if (fallbackTimer) {
+    clearTimeout(fallbackTimer);
+    fallbackTimer = null;
+  }
+}
+
+/**
  * Mapbox 地図を初期化する。token は Workers 経由で取得した公開トークン(pk)。
  */
 export function initMap(containerId, token) {
@@ -61,10 +102,34 @@ export function initMap(containerId, token) {
   map = new mapboxgl.Map({
     container: containerId,
     style: STANDARD_STYLE,
+    projection: 'globe', // 地球俯瞰。Standard は既定で globe だが意図を明示する。
     center: INITIAL_CENTER,
     zoom: INITIAL_ZOOM,
     attributionControl: true, // 規約上、出典表記は表示したまま
   });
+
+  // 地球俯瞰の自転演出のセットアップ。
+  // prefers-reduced-motion（動きを減らす設定）の端末では酔い対策で自転しない。
+  const reduceMotion =
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!reduceMotion) {
+    spinEnabled = true;
+    // moveend ごとに次の一手を打つことで継続的な自転になる。
+    map.on('moveend', spinGlobe);
+    // ユーザーが地図を触ったら主導権を渡し、自転は止める。
+    map.on('dragstart', stopSpin);
+    // 初回キック（load 後に最初の easeTo を発火させる）。
+    map.on('load', spinGlobe);
+  }
+  // 電波が悪く GPS が来ない場合の保険。一定時間で自転をやめ、
+  // 地球のまま放置せず日本列島スケールへ寄せる。
+  fallbackTimer = setTimeout(() => {
+    if (!markerAdded) {
+      stopSpin();
+      map.easeTo({ center: INITIAL_CENTER, zoom: FALLBACK_ZOOM, duration: 2000 });
+    }
+  }, GPS_FALLBACK_MS);
 
   // 現在地マーカー（mintグリーンの二重丸 SVG）。位置確定後に addTo する。
   const el = document.createElement('div');
@@ -191,12 +256,15 @@ export function updateCurrentLocation(lat, lon, isFirst = false) {
     markerAdded = true;
   }
   if (isFirst) {
-    // 初回の位置確定: 日本全体の引きの画から現在地へ一気に寄る演出。
-    // flyTo は途中で一度引いてから寄る弧を描くので「ズームしていく」感が出る。
+    // 初回の位置確定: 地球俯瞰の自転を止め、現在地へ一気に寄る演出。
+    // 地球（ズーム約1.2）から市街地（ズーム14）は距離が大きいので、
+    // duration を長めにして弧をなめらかにする。flyTo が globe→平面の
+    // 投影切替も自動でこなす。
+    stopSpin();
     map.flyTo({
       center: [lon, lat],
       zoom: FIRST_FIX_ZOOM,
-      duration: 3500,
+      duration: 4500,
       curve: 1.6,
       essential: true, // prefers-reduced-motion でも実行（追従に必要なため）
     });
