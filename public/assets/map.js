@@ -48,6 +48,10 @@ let fallbackTimer = null;
 // pendingLocation 経由になったとき isFirst=false に上書きされ flyTo が
 // 発火しない事故が起きる。地図側でも「まだ寄っていない」を持って二重で守る。
 let didInitialZoom = false;
+// 初回ズームインの flyTo が飛行中か。飛行中は後続の GPS 更新による
+// 中心追従(easeTo)を見送らないと、flyTo が途中で打ち切られて低ズームのまま
+// 止まってしまう（watchPosition が毎秒位置を送るため起きる）。
+let initialFlyInProgress = false;
 
 /**
  * 端末の現在時刻から Standard スタイルの lightPreset を決める。
@@ -283,6 +287,8 @@ export function updateCurrentLocation(lat, lon, isFirst = false) {
       // 回り込みが大きいほど時間を延ばし、速すぎる回転を避ける。
       duration = Math.min(6500, Math.max(4500, arc * 14));
     }
+    // 飛行中は後続 GPS 更新の easeTo を抑止する（割り込みで途中停止しないため）。
+    initialFlyInProgress = true;
     map.flyTo({
       center: [targetLng, lat],
       zoom: FIRST_FIX_ZOOM,
@@ -290,7 +296,17 @@ export function updateCurrentLocation(lat, lon, isFirst = false) {
       curve: 1.6,
       essential: true, // prefers-reduced-motion でも実行（追従に必要なため）
     });
+    // 飛行完了で抑止解除。moveend が来ない異常時に備え duration 経過でも解除。
+    map.once('moveend', () => {
+      initialFlyInProgress = false;
+    });
+    setTimeout(() => {
+      initialFlyInProgress = false;
+    }, duration + 1000);
   } else {
+    // 初回ズームイン飛行中は中心追従を見送る（flyTo を止めないため）。
+    // マーカー位置は上で更新済みなので現在地マーカーは動き続ける。
+    if (initialFlyInProgress) return;
     // 2 回目以降は現在のズームを保ったまま中心だけ滑らかに追従。
     map.easeTo({ center: [lon, lat], zoom: map.getZoom(), duration: 300 });
   }
