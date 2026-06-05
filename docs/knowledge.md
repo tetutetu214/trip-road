@@ -1210,6 +1210,18 @@ LLM 自動生成を保ったまま品質を上げる。手作業による解説�
 
 ---
 
+## 4.22 デプロイした修正がスマホに届かない（独自ドメインの4時間ブラウザキャッシュ）
+
+2026-06-06、地球俯瞰ズーム演出の修正を何度デプロイしても実機(iPhone Safari)に反映されない事象が発生。切り分けの結果、原因は Cloudflare のゾーン設定だった。
+
+- 症状: `wrangler pages deploy` 後も独自ドメインで reload しても古い `map.js` が読まれる。サーバ側(curl)には最新が入っているのに端末に届かない。
+- 切り分け: `curl -sI https://trip-road.tetutetu214.com/assets/map.js` → `cache-control: max-age=14400`(4時間)。一方 `https://trip-road.pages.dev/assets/map.js` → `cache-control: no-cache`。pages.dev では `public/_headers` が効くが、独自ドメインでは効かない。
+- 真因: `tetutetu214.com` ゾーンの **Browser Cache TTL = 4時間** が `_headers` を上書きしている。Pages の `_headers` は pages.dev では尊重されるが、独自ドメイン経由ではゾーンのブラウザキャッシュ設定が優先される。
+- 対処（恒久）: Cloudflare Dashboard → tetutetu214.com → Caching → Configuration → Browser Cache TTL を **「Respect Existing Headers」** に変更（またはホスト名スコープの Cache Rule で /assets/* をオリジン尊重に）。これでアカウント全体ではなく `_headers` の no-cache が独自ドメインでも効く。
+- 対処（即時確認）: Safari の **プライベートタブ**で開く（キャッシュ無し）。あるいは Settings→Safari→履歴とWebサイトデータを消去。サービスワーカーは無いので SW 起因ではない。
+- JS にバージョン番号(ハッシュ)を付けていない（`/assets/app.js` 直読み）ことが前提として効いている。将来ビルド導入時はファイル名ハッシュで根本解決できる。
+- 教訓: フロントのデプロイ反映を実機で確認するときは、まずプライベートタブで見る。「直したのに変わらない」はコードではなくキャッシュを疑う。
+
 ## 4.21 学習済み概念（理解度テストハーネス記録）
 
 `~/.claude/CLAUDE.md` の理解度テストハーネスで、てつてつが理解を確認した概念を日付つきで記録する。次回以降、同じ概念に関する実装の前のテストはスキップ判定に使う。
