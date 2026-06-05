@@ -43,6 +43,11 @@ let hillshadeLevel = 'off';
 let spinEnabled = false;
 // GPS が来ないときのフォールバック用タイマー ID。
 let fallbackTimer = null;
+// 初回ズームイン（地球俯瞰 → 現在地）を済ませたか。
+// app 側の isFirst フラグだけに頼ると、style.load が遅れて初回 fix が
+// pendingLocation 経由になったとき isFirst=false に上書きされ flyTo が
+// 発火しない事故が起きる。地図側でも「まだ寄っていない」を持って二重で守る。
+let didInitialZoom = false;
 
 /**
  * 端末の現在時刻から Standard スタイルの lightPreset を決める。
@@ -255,16 +260,33 @@ export function updateCurrentLocation(lat, lon, isFirst = false) {
     marker.addTo(map);
     markerAdded = true;
   }
-  if (isFirst) {
+  // 初回ズームは「app 側の isFirst」だけでなく「まだ寄っていないか」でも判定する。
+  // globe 描画で style.load が遅れると初回 fix が pendingLocation 経由になり、
+  // 2 件目以降で isFirst=false に上書きされて flyTo が一度も発火しない事故を防ぐ。
+  if (isFirst || !didInitialZoom) {
     // 初回の位置確定: 地球俯瞰の自転を止め、現在地へ一気に寄る演出。
     // 地球（ズーム約1.2）から市街地（ズーム14）は距離が大きいので、
     // duration を長めにして弧をなめらかにする。flyTo が globe→平面の
     // 投影切替も自動でこなす。
+    const wasSpinning = spinEnabled;
+    didInitialZoom = true;
     stopSpin();
+    // 自転中だった場合は、その回転方向（西回り＝経度を減らす向き）を保ったまま
+    // 目的地へ回り込む。最短経路だと自転と逆向きに振れて「急に逆回転」する
+    // 気持ち悪さが出るため、目的経度を現在の中心経度以下へ正規化して同方向で到達させる。
+    let targetLng = lon;
+    let duration = 4500;
+    if (wasSpinning) {
+      const cur = map.getCenter().lng;
+      while (targetLng > cur) targetLng -= 360; // cur 以下にして西回りを継続
+      const arc = cur - targetLng; // 回り込む経度差（0〜360度）
+      // 回り込みが大きいほど時間を延ばし、速すぎる回転を避ける。
+      duration = Math.min(6500, Math.max(4500, arc * 14));
+    }
     map.flyTo({
-      center: [lon, lat],
+      center: [targetLng, lat],
       zoom: FIRST_FIX_ZOOM,
-      duration: 4500,
+      duration,
       curve: 1.6,
       essential: true, // prefers-reduced-motion でも実行（追従に必要なため）
     });
