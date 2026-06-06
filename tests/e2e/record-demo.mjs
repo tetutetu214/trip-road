@@ -86,9 +86,40 @@ await page.goto(URL, { waitUntil: 'domcontentloaded' });
 // メイン画面（地図）表示を待つ。
 await page.waitForSelector('#main-screen', { state: 'visible', timeout: 15000 });
 
-// 地図スタイルの読込完了を待つ（ここまでは黒い画面なので後でトリミングする）。
+// 地図スタイルの読込完了を待つ。
 await page.waitForFunction(() => window.__trMap && window.__trMap.isStyleLoaded(), { timeout: 20000 });
-// 動画のうち、この秒数より前は黒い読込画面なのでトリミングの起点にする。
+
+// タイルを事前にキャッシュする。これをしないと、回り込みが速すぎて通過先の
+// 地球タイルが未読込のまま＝真っ黒になる。回り込む全経度ぶんと、新宿の
+// ズーム先(z14まで)を先に読ませておく。この区間は後でトリミングする。
+await page.evaluate(
+  async ({ lon, lat }) => {
+    const map = window.__trMap;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const waitTiles = async () => {
+      for (let i = 0; i < 50; i++) {
+        if (map.areTilesLoaded()) return;
+        await sleep(100);
+      }
+    };
+    // 地球儀の全経度ぶんのタイル（回り込みで通過する面）。
+    for (const lng of [137, 50, -40, -130, 137]) {
+      map.jumpTo({ center: [lng, 20], zoom: 1.4 });
+      await waitTiles();
+    }
+    // 現在地のズーム先タイル（段階的に z14 まで）。
+    for (const z of [4, 7, 10, 12, 14]) {
+      map.jumpTo({ center: [lon, lat], zoom: z });
+      await waitTiles();
+    }
+    // 開始位置（地球俯瞰・日本）へ戻す。
+    map.jumpTo({ center: [137.5, 37.5], zoom: 1.2 });
+    await waitTiles();
+  },
+  { lon: SHINJUKU.longitude, lat: SHINJUKU.latitude },
+);
+
+// ここから本番。トリミングの起点（事前読込の動きは切り捨てる）。
 const blackMs = Date.now() - tNav;
 
 // 地球儀をしっかり見せる（この間 idle 自転がゆっくり回る）。
