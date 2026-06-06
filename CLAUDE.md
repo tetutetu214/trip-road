@@ -148,3 +148,44 @@ wrangler pages deploy public/ --project-name=trip-road
 - Mapbox GL JS（メイン地図ライブラリ）
 - Leaflet.js（BSD-2-Clause、履歴画面）
 - Turf.js（MIT）
+
+## 11. 重要な運用上の知見
+
+### モデル選定: Nova Pro 一択 (戻りなし)
+
+Generator・Judge ともに `us.amazon.nova-pro-v1:0` 固定。Anthropic Claude へのロールバックは選択肢にない。Plan H 移行 (2026-05-09) の動機がコスト削減のため、てつてつ個人の PoC でランニングコストを抑えるのが必須要件で、Anthropic Claude (特に Sonnet 4.6 を Judge に使っていた構成) は Nova Pro の数倍以上の価格で現実的でない。
+
+「Plan H 成功 or 失敗 → 失敗なら戻す」という評価枠組み自体が無効。プロンプト不調・Judge 暴走等の問題が見つかっても、Anthropic に戻すのではなく「Nova Pro でプロンプトをどう書き直すか」「Few-shot をどう強化するか」「RAG をどう拡張するか」で答える。例外は Bedrock 障害でしばらく使えない等、技術的に Nova Pro が機能しない緊急時のみ。
+
+### 評価方法: バッチ curl (実走観測ではない)
+
+プロンプト/モデル/Judge ロジック変更時の品質評価は、**実走テレメトリではなくバッチ curl で `/api/describe` を叩いた結果で行う**。
+
+ユーザはてつてつ1人、移動範囲は自宅周辺・通勤ルートに固定で、市町村切替時にしか生成されず、しかも合格時のみキャッシュ書込のため、合格した市町村は二度と再評価されない。1〜2週間の実走でサンプル10件以上集めようとすると永遠に観測サイクルが回らない。
+
+代わりに神奈川県内全市町村など固定セット × 1〜2 節気を `/api/describe` に curl で順に投げて軸別平均と合格率を取る (B1 sweep)。Nova Pro なら1回数十円で30件超のサンプルが一気に取れる。Judge 自体のプロンプト変更時は、別途手動ラベル付きの meta-eval セット 20〜30件で暴走検出。`todo.md` の「1〜2週間の実走」系チェックボックスは観測戦略として無効と判断する。PWA / GPS / UI / レイアウト系の変更は実機確認が必要なので除外。
+
+### Plan I 方針転換 (2026-05-12 〜)
+
+Plan I を 2026-05-12 に本番反映し、アプリのコンセプトが大きく変わった。
+
+**Before (Plan H、〜2026-05-09):** GPS 連動で市町村を判定し、二十四節気＋市町村から **季節感のある旅の解説**を Nova Pro が生成。Judge は 4 軸 (事実 / 具体性 / 季節整合 / 情報密度) で評価。Wikipedia は事実検証用の参照。
+
+**After (Plan I、2026-05-12〜):**
+
+- GPS 連動で市町村を判定し、**その市町村の Wikipedia 抜粋を 120-180 字に要約**して表示
+- 二十四節気・季節情報は廃止 (`season.js` / `solar_term_meta.js` / `cache.js` は存在しない)
+- Wikipedia 抜粋は「唯一の情報源」、抜粋にない事実は出さないハードルール
+- Judge は Faithfulness 1 軸 (抜粋外の固有名詞混入を検出) に簡素化
+- Wikipedia 記事が無い市町村は Generator を呼ばずに「この市町村の Wikipedia 記事が見つかりませんでした」を表示
+- Judge NG + 再生成 NG の場合は Wikipedia 抜粋を機械的に転載するフォールバック
+
+リクエスト body は `{prefecture, municipality}` のみ (`solar_term` は廃止)。レスポンスは `description / no_wikipedia / judge_passed / faithfulness_score / out_of_kb_terms / regenerated / fallback_to_extract / wikipedia_extract_length / judge_error / generator_model / judge_model`。テレメトリ S3 バケットは新 Plan I のログが `year=YYYY/month=MM/day=DD/`、Plan H 以前の 37 件は `legacy/year=YYYY/...` に退避済。
+
+Phase 2-1 (2026-05-12 完了) で政令市の区の Wikipedia 取得失敗を修正、`resolveWikipediaTitle` attempt=2「{市}{区} → {区} ({市})」追加で no_wikipedia 2/10 → 0/10。Phase 2-3 (2026-05-12 完了) で `exintro=true` を撤廃して本文全体取得に変更、`buildCacheKey` を v2 に昇格して旧キャッシュ無効化。合格率 60% → **100%**、fallback_to_extract 40% → 0% を達成。残課題は Faithfulness Judge の形態素解析化 (Phase 2-2 候補、`out_of_kb_terms` 誤検知への対策)。
+
+仕様詳細は `docs/plans/2026-05-11-plan-i-wikipedia-summary-pivot.md`、知見は `docs/knowledge.md` 4.24 / 4.25 / 4.26 章。
+
+### 既存節との整合性メモ
+
+§ 1〜5 の記述は Plan H 時点 (季節感ある解説 / キャッシュキー = 市町村_季節 等) のままで、上記 Plan I 方針転換と矛盾する箇所がある。本ファイルの書き換えは別途実施予定。本節 (§11) が現行仕様の正である。
