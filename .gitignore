@@ -59,3 +59,6 @@ playwright-report/
 
 # テレメトリ分析の取得データ（個人の移動ログそのものなのでコミットしない）
 docs/analysis/data/
+
+# デモ録画の出力(動画は管理しない)
+demo/
