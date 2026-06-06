@@ -24,6 +24,11 @@ const FIRST_FIX_ZOOM = 14;
 const SPIN_MAX_ZOOM = 5;
 // 地球が一周するのにかける秒数。大きいほどゆっくり回る。
 const SECONDS_PER_REVOLUTION = 180;
+// GPS 確定時のズーム演出。自転と同じ西回りのまま現在地まで回り込み(Phase1)、
+// その場でズームイン(Phase2)する。回り込み量によらず合計時間を一定にするため、
+// 各フェーズの時間を固定する（押してからズーム完了までが常に同じ秒数になる）。
+const ROTATE_MS = 3500; // Phase1: 地球儀のまま現在地経度まで回り込む
+const DIVE_MS = 2500; // Phase2: その場で市街地までズームイン
 
 let map = null;
 let marker = null;
@@ -252,29 +257,40 @@ export function updateCurrentLocation(lat, lon, isFirst = false) {
   // globe 描画で style.load が遅れると初回 fix が pendingLocation 経由になり、
   // 2 件目以降で isFirst=false に上書きされて flyTo が一度も発火しない事故を防ぐ。
   if (isFirst || !didInitialZoom) {
-    // 初回の位置確定: 地球俯瞰の自転を止め、現在地へ一気に寄る演出。
-    // flyTo は最短経路で現在地へ寄せる。flyTo に遠回りの経度（lon-360 等）を
-    // 渡すと「距離が大きい」と判断して大きくズームアウトしてしまい、
-    // かえって寄らなくなるため、素直に [lon, lat] を渡す。
-    const DURATION = 4500;
+    // 初回の位置確定: 自転と同じ向き（西回り）を保ったまま現在地まで回り込み、
+    // その場でズームインする。最短経路の flyTo だと自転と逆向きに戻って
+    // 「逆回転」して気持ち悪いので、わざと同方向で回り込む。
+    // flyTo に遠回りの経度を渡すと大きくズームアウトしてしまうため、
+    // 回り込み(Phase1)とズーム(Phase2)を分け、Phase1 は easeTo で横移動だけ、
+    // Phase2 はその場でズームだけ、にしてズームアウトを防ぐ。
     didInitialZoom = true;
     stopSpin();
-    // 飛行中は後続 GPS 更新の easeTo を抑止する（割り込みで途中停止しないため）。
+    // 回り込み・ズーム中は後続 GPS 更新の easeTo を抑止する（割り込み防止）。
     initialFlyInProgress = true;
-    map.flyTo({
-      center: [lon, lat],
-      zoom: FIRST_FIX_ZOOM,
-      duration: DURATION,
-      curve: 1.6,
-      essential: true, // prefers-reduced-motion でも実行（追従に必要なため）
-    });
-    // 飛行完了で抑止解除。moveend が来ない異常時に備え duration 経過でも解除。
+
+    // 目的経度を現在の中心経度より西側へ正規化し、同方向（西回り）で到達させる。
+    let targetLng = lon;
+    const cur = map.getCenter().lng;
+    while (targetLng > cur) targetLng -= 360;
+
+    // Phase1: 地球儀のまま現在地経度まで西へ回り込む（zoom は指定せず現状維持）。
+    map.easeTo({ center: [targetLng, lat], duration: ROTATE_MS, essential: true });
+    // Phase1 完了 → Phase2: その場でズームイン（横移動なし＝ズームアウトしない）。
     map.once('moveend', () => {
-      initialFlyInProgress = false;
+      map.easeTo({
+        center: [targetLng, lat],
+        zoom: FIRST_FIX_ZOOM,
+        duration: DIVE_MS,
+        essential: true,
+      });
+      map.once('moveend', () => {
+        initialFlyInProgress = false;
+      });
     });
+    // moveend が来ない異常時の保険。合計時間＋余裕で必ず解除する。
     setTimeout(() => {
       initialFlyInProgress = false;
-    }, DURATION + 1000);
+    }, ROTATE_MS + DIVE_MS + 1500);
   } else {
     // 初回ズームイン飛行中は中心追従を見送る（flyTo を止めないため）。
     // マーカー位置は上で更新済みなので現在地マーカーは動き続ける。
