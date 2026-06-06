@@ -24,9 +24,6 @@ const FIRST_FIX_ZOOM = 14;
 const SPIN_MAX_ZOOM = 5;
 // 地球が一周するのにかける秒数。大きいほどゆっくり回る。
 const SECONDS_PER_REVOLUTION = 180;
-// GPS がこの時間来なければ自転をやめ、日本列島スケールへフォールバックする(ms)。
-const GPS_FALLBACK_MS = 15000;
-const FALLBACK_ZOOM = 4;
 
 let map = null;
 let marker = null;
@@ -39,10 +36,9 @@ let trackCoords = [];
 let pendingLocation = null;
 // 現在の陰影レベル（'off'/'weak'/'strong'）。
 let hillshadeLevel = 'off';
-// 地球俯瞰の自転演出が有効か。GPS 初回確定 or ユーザー操作 or フォールバックで止める。
+// 地球俯瞰の自転演出が有効か。GPS 初回確定 or ユーザー操作で止める。
+// GPS が来ない間は止めない（地球は同じ向きに回り続けるのが自然なため）。
 let spinEnabled = false;
-// GPS が来ないときのフォールバック用タイマー ID。
-let fallbackTimer = null;
 // 初回ズームイン（地球俯瞰 → 現在地）を済ませたか。
 // app 側の isFirst フラグだけに頼ると、style.load が遅れて初回 fix が
 // pendingLocation 経由になったとき isFirst=false に上書きされ flyTo が
@@ -93,14 +89,10 @@ function spinGlobe() {
 }
 
 /**
- * 自転を止める。GPS 確定・ユーザー操作・フォールバック時に呼ぶ。
+ * 自転を止める。GPS 確定・ユーザー操作時に呼ぶ。
  */
 function stopSpin() {
   spinEnabled = false;
-  if (fallbackTimer) {
-    clearTimeout(fallbackTimer);
-    fallbackTimer = null;
-  }
 }
 
 /**
@@ -131,14 +123,6 @@ export function initMap(containerId, token) {
     // 初回キック（load 後に最初の easeTo を発火させる）。
     map.on('load', spinGlobe);
   }
-  // 電波が悪く GPS が来ない場合の保険。一定時間で自転をやめ、
-  // 地球のまま放置せず日本列島スケールへ寄せる。
-  fallbackTimer = setTimeout(() => {
-    if (!markerAdded) {
-      stopSpin();
-      map.easeTo({ center: INITIAL_CENTER, zoom: FALLBACK_ZOOM, duration: 2000 });
-    }
-  }, GPS_FALLBACK_MS);
 
   // 現在地マーカー（mintグリーンの二重丸 SVG）。位置確定後に addTo する。
   const el = document.createElement('div');
