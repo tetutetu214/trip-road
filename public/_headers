@@ -1,0 +1,10 @@
+# Cloudflare Pages のキャッシュ制御。
+# JS/CSS はファイル名にバージョンを付けていないため、長期キャッシュされると
+# デプロイしても古い版がブラウザで使い回され、修正が端末に届かない事故が起きる。
+# 毎回サーバへ確認させる（no-cache）ことで、デプロイ後の reload で確実に最新を読む。
+/assets/*
+  Cache-Control: no-cache, must-revalidate
+
+# index.html も毎回確認させる。
+/index.html
+  Cache-Control: no-cache, must-revalidate

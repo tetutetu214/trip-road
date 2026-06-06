@@ -1210,9 +1210,42 @@ LLM 自動生成を保ったまま品質を上げる。手作業による解説�
 
 ---
 
+## 4.22 デプロイした修正がスマホに届かない（独自ドメインの4時間ブラウザキャッシュ）
+
+2026-06-06、地球俯瞰ズーム演出の修正を何度デプロイしても実機(iPhone Safari)に反映されない事象が発生。切り分けの結果、原因は Cloudflare のゾーン設定だった。
+
+- 症状: `wrangler pages deploy` 後も独自ドメインで reload しても古い `map.js` が読まれる。サーバ側(curl)には最新が入っているのに端末に届かない。
+- 切り分け: `curl -sI https://trip-road.tetutetu214.com/assets/map.js` → `cache-control: max-age=14400`(4時間)。一方 `https://trip-road.pages.dev/assets/map.js` → `cache-control: no-cache`。pages.dev では `public/_headers` が効くが、独自ドメインでは効かない。
+- 真因: `tetutetu214.com` ゾーンの **Browser Cache TTL = 4時間** が `_headers` を上書きしている。Pages の `_headers` は pages.dev では尊重されるが、独自ドメイン経由ではゾーンのブラウザキャッシュ設定が優先される。
+- 対処（恒久）: Cloudflare Dashboard → tetutetu214.com → Caching → Configuration → Browser Cache TTL を **「Respect Existing Headers」** に変更（またはホスト名スコープの Cache Rule で /assets/* をオリジン尊重に）。これでアカウント全体ではなく `_headers` の no-cache が独自ドメインでも効く。
+- 対処（即時確認）: Safari の **プライベートタブ**で開く（キャッシュ無し）。あるいは Settings→Safari→履歴とWebサイトデータを消去。サービスワーカーは無いので SW 起因ではない。
+- JS にバージョン番号(ハッシュ)を付けていない（`/assets/app.js` 直読み）ことが前提として効いている。将来ビルド導入時はファイル名ハッシュで根本解決できる。
+- 教訓: フロントのデプロイ反映を実機で確認するときは、まずプライベートタブで見る。「直したのに変わらない」はコードではなくキャッシュを疑う。
+
+## 4.23 Mapbox easeTo/flyTo は経度を正規化する（長い方に回せない）
+
+2026-06-06、地球俯瞰の自転と同じ向き（西回り）を保ったまま現在地へ回り込ませたかったが、`map.easeTo({center:[lon-360, lat]})` のように絶対経度を渡しても**逆回転（東向きの最短経路）**になった。
+
+- 原因: Mapbox は渡された center 経度を最短の同位置へ正規化する。`lon-360`(例 -220) は 140 に正規化され、現在地(135)からの最短は +5°(東) になる。`flyTo` はさらに「距離が大きい」と判断して大きくズームアウトする副作用もある（これで一度ズーム自体を壊した）。
+- 自転が西へ回るのは、毎ステップ `getCenter()`(正規化済み) から小さく引いた値を `easeTo(duration:1000)` で渡しているから。一発の大きな経度差は正規化に負ける。
+- 解決: 「長い方（西回り）」を強制したいときは `requestAnimationFrame` で `setCenter` を**少しずつ**呼び、経度を連続的に減らす。1フレームの差が小さければ正規化に影響されず連続して西へ回る。回り込み(Phase1, ズーム据置)とズーム(Phase2)を分け、各 duration 固定で「押してからズーム完了まで一定時間」も満たす。
+- 検証: E2E から `window.__trMap.getCenter().lng` を時系列サンプルし、差分を unwrap して総移動量を見る。西回りなら大きな負値（実測 -357.7°）、逆回転なら 0 付近の正値。最終フレームの screenshot だけでは方向バグを見逃すので、方向は数値で検証する。
+
 ## 4.21 学習済み概念（理解度テストハーネス記録）
 
 `~/.claude/CLAUDE.md` の理解度テストハーネスで、てつてつが理解を確認した概念を日付つきで記録する。次回以降、同じ概念に関する実装の前のテストはスキップ判定に使う。
+
+### 2026-06-06 起動演出PR作成直前テスト
+
+- **このPRの変更範囲**: 地図ライブラリ（Mapbox）はそのままで、起動時のカメラ演出（地球俯瞰スタート→自転→西回りの回り込み→ズームイン）を新設・調整したもの。Leaflet→Mapbox 移行は別作業(2026-06-03)で、このPRとは無関係。「どのライブラリか」ではなく「同じ地図でどう動かすか」の変更。
+- **easeTo/flyTo の経度正規化**: Mapbox は渡された center 経度を最短の同位置へ正規化するため、`lon-360` を渡しても逆回転（東向き最短）になる。西回り（長い方）を強制したいときは requestAnimationFrame で経度を少しずつ減らす（[[4.23 参照]]）。
+- **デプロイが端末に届かない原因**: 独自ドメインは Cloudflare ゾーンの Browser Cache TTL=4時間が `_headers` を上書きし、JSにバージョン名もないため、reload しても古い map.js を使い回していた（[[4.22 参照]]）。
+
+### 2026-06-05 地球俯瞰スタート演出 着手前テスト
+
+- **globe projection の本質**: Standard スタイルは低ズームで自動的に globe（地球が丸く見える投影）になる。地球を出すために一番効くのは「ズームを下げること」。背景画像の差し替えやピッチ傾けではない。これまで `INITIAL_ZOOM = 4`（日本列島スケール）で始めていたため地球が見えず、てつてつの記憶（地球俯瞰スタート）と実装がズレていた。修正は `projection: 'globe'` 明示 + `INITIAL_ZOOM` を 1.2 へ下げる
+- **地球俯瞰スタートと電波のトレードオフ**: ズームイン演出(`flyTo`)は GPS 初回確定(`isFirst`)時にだけ発火する。地球俯瞰(ズーム1.2)から現在地(ズーム14)は距離が非常に大きいため、電波が悪く GPS 確定が遅いと「地球のまま動かず固まる時間」が日本列島スタート時より目立つ。GPS 精度低下やタイル読込失敗が起きるわけではない
+- **自転演出の狙い**: 地球をゆっくり自転させる主目的は「GPS 確定までの待ち時間を演出に変える」こと。固まって見える問題を回避するため。GPS を速くする・電力を抑えるためではない。実装は `moveend` で `easeTo` を再帰的に打って等速回転にし、GPS 確定/ユーザー操作(dragstart)/15秒フォールバックで停止する。`prefers-reduced-motion` 端末では酔い対策で自転しない
 
 ### 2026-06-03 Mapbox GL JS 移行（メイン地図）着手前テスト
 
@@ -2021,4 +2054,13 @@ iPhone Safari メモリ予算（~1 GB）内に十分収まる。Cloudflare Pages
 - **初期化タイミング**: source/layer 追加と `setConfigProperty`（lightPreset）は `map.on('style.load')` の中で行う。`'load'` ではなく `'style.load'`（Standard の config 適用に必要）。GPS 初回 fix が地図ロードより先に来てもクラッシュしないよう、現在地は `pendingLocation` に、軌跡は `trackCoords` 配列に保持して style.load 後に反映する設計。
 - **attribution は消せない**: Mapbox の出典表記・ロゴは利用規約で必須。地理院時代は CSS で隠していたが Mapbox では非表示禁止。`.mapboxgl-ctrl-bottom-*` を下部カードより前面(z-index)に出して見えるようにした。
 - **invalidateSize→resize**: Leaflet の `map.invalidateSize()` は Mapbox では `map.resize()`。iOS Safari の復帰・回転対策のリサイズ処理はそのまま移植。
-- **陰影起伏図**: 地理院 hillshade タイルの代わりに Mapbox の raster-dem（mapbox.mapbox-terrain-dem-v1）+ hillshade レイヤー。off/weak/strong を `hillshade-exaggeration`(0/0.4/0.7)とレイヤー可視性で切替。
+- **陰影起伏図**: 地理院 hillshade タイルの代わりに Mapbox の raster-dem（mapbox.mapbox-terrain-dem-v1）+ hillshade レイヤー。off/weak/strong を `hillshade-exaggeration` とレイヤー可視性で切替。`hillshade-exaggeration` の有効範囲は 0〜1（1 が上限）。
+
+### 6.1 移行後の見た目調整（2026-06-04）
+
+移行直後のメイン地図に対するてつてつの不満3点を修正。
+
+- **自前レイヤーが夜に黒く沈む（最重要・再発注意）**: Standard スタイルは3D照明（lightPreset）を地図全体にかける。`addLayer` で足した自前のレイヤー（軌跡ライン等）は、デフォルトだとこの照明の影響を受けるため、`lightPreset: night` だと指定色（マゼンタ `#ff4d8c`）でも黒く落ちる。`paint` に **`'line-emissive-strength': 1`** を付けると照明を無視してレイヤー自身の色で発光し、夜でもマゼンタのまま見える。0=照明に従う / 1=自前の色のみ。fill/circle/symbol にも同名の `*-emissive-strength` がある。今後 Standard 上に色付きレイヤーを足すときは必ず emissive-strength を検討する。
+- **起動時の画**: 以前は `center [138,35.5] / zoom 5`（関東全体）から GPS 確定で `easeTo` ズーム。日本全体（`center [137.5,37.5] / zoom 4`）始まりに変え、初回 fix を `flyTo`(duration 3500, curve 1.6) にして「日本全体→現在地へ寄る」演出にした。2回目以降の追従は従来どおり `easeTo` で現ズーム維持。
+- **陰影の誇張不足**: weak0.4/strong0.7 は効果が薄かったため weak0.7/strong1.0（上限）に引き上げ。デフォルトは off 据え置き（てつてつ判断）。
+- **トグル時の「一瞬濃く→薄く」ちらつき**: paint プロパティは Mapbox 既定で約300msアニメーションする。OFF時は `visibility:none` にするだけで `hillshade-exaggeration` の値は前回(strong=1.0)が残るため、次の OFF→弱 表示時に 1.0→0.7 のアニメが走り、表示瞬間に濃く出てから薄く落ちる。`paint` に **`'hillshade-exaggeration-transition': { duration: 0 }`** を入れて値をスナップさせれば消える。色付きレイヤーの値を JS から動的に切り替えるときは、この既定トランジションの存在に注意。

@@ -11,9 +11,24 @@
  * [lon, lat] に並べ替える。
  */
 const STANDARD_STYLE = 'mapbox://styles/mapbox/standard';
-const INITIAL_CENTER = [138, 35.5]; // [lng, lat]
-const INITIAL_ZOOM = 5;
+// 起動時は宇宙から見た地球俯瞰の画から始め、GPS 確定時に現在地へ
+// 一気に寄せる「ズームイン」の演出を出す。center は本州中央付近で、
+// 地球上に日本が正面に来るようにする。
+// Standard スタイルは低ズームで自動的に globe（地球が丸く見える投影）になる。
+// INITIAL_ZOOM を下げるほど地球全体が画面に収まる。
+const INITIAL_CENTER = [137.5, 37.5]; // [lng, lat]
+const INITIAL_ZOOM = 1.2;
 const FIRST_FIX_ZOOM = 14;
+// GPS 初回確定までに自転で待たせる演出。これ以上寄ったら自転しない
+// （flyTo の途中で moveend が誤って自転を再開しないためのガード）。
+const SPIN_MAX_ZOOM = 5;
+// 地球が一周するのにかける秒数。大きいほどゆっくり回る。
+const SECONDS_PER_REVOLUTION = 180;
+// GPS 確定時のズーム演出。自転と同じ西回りのまま現在地まで回り込み(Phase1)、
+// その場でズームイン(Phase2)する。回り込み量によらず合計時間を一定にするため、
+// 各フェーズの時間を固定する（押してからズーム完了までが常に同じ秒数になる）。
+const ROTATE_MS = 3500; // Phase1: 地球儀のまま現在地経度まで回り込む
+const DIVE_MS = 2500; // Phase2: その場で市街地までズームイン
 
 let map = null;
 let marker = null;
@@ -26,6 +41,18 @@ let trackCoords = [];
 let pendingLocation = null;
 // 現在の陰影レベル（'off'/'weak'/'strong'）。
 let hillshadeLevel = 'off';
+// 地球俯瞰の自転演出が有効か。GPS 初回確定 or ユーザー操作で止める。
+// GPS が来ない間は止めない（地球は同じ向きに回り続けるのが自然なため）。
+let spinEnabled = false;
+// 初回ズームイン（地球俯瞰 → 現在地）を済ませたか。
+// app 側の isFirst フラグだけに頼ると、style.load が遅れて初回 fix が
+// pendingLocation 経由になったとき isFirst=false に上書きされ flyTo が
+// 発火しない事故が起きる。地図側でも「まだ寄っていない」を持って二重で守る。
+let didInitialZoom = false;
+// 初回ズームインの flyTo が飛行中か。飛行中は後続の GPS 更新による
+// 中心追従(easeTo)を見送らないと、flyTo が途中で打ち切られて低ズームのまま
+// 止まってしまう（watchPosition が毎秒位置を送るため起きる）。
+let initialFlyInProgress = false;
 
 /**
  * 端末の現在時刻から Standard スタイルの lightPreset を決める。
@@ -40,7 +67,8 @@ export function lightPresetForHour(hour) {
 }
 
 // 陰影起伏図の強度（hillshade-exaggeration）。'off' はレイヤー非表示。
-const HILLSHADE_EXAGGERATION = { off: 0, weak: 0.4, strong: 0.7 };
+// 仕様上 0〜1 が上限。以前は weak0.4/strong0.7 で効果が薄かったため引き上げ。
+const HILLSHADE_EXAGGERATION = { off: 0, weak: 0.7, strong: 1.0 };
 
 function trackGeoJSON() {
   return {
@@ -51,6 +79,67 @@ function trackGeoJSON() {
 }
 
 /**
+ * 地球をわずかに西へ回す。moveend で再帰的に呼ばれ続けることで
+ * 一定速度の自転になる（easeTo 完了 → moveend 発火 → 次の easeTo）。
+ * SPIN_MAX_ZOOM 以上に寄っている間は何もしない（flyTo 中の誤発火対策）。
+ */
+function spinGlobe() {
+  if (!spinEnabled || !map) return;
+  if (map.getZoom() >= SPIN_MAX_ZOOM) return;
+  const distancePerSecond = 360 / SECONDS_PER_REVOLUTION;
+  const center = map.getCenter();
+  center.lng -= distancePerSecond;
+  // easing を線形(n => n)にして等速回転にする。duration と回転量を合わせる。
+  map.easeTo({ center, duration: 1000, easing: (n) => n });
+}
+
+/**
+ * 自転を止める。GPS 確定・ユーザー操作時に呼ぶ。
+ */
+function stopSpin() {
+  spinEnabled = false;
+}
+
+/**
+ * 自転と同じ西回り（経度が減る向き）を保ったまま現在地経度まで地球を回し込み、
+ * 到達後にその場でズームインする。
+ *
+ * easeTo / flyTo に絶対経度（lon-360 等）を渡すと Mapbox が最短の同位置へ
+ * 正規化してしまい、結局逆回転（東向き）になる。これを避けるため Phase1 は
+ * requestAnimationFrame で経度を少しずつ減らして「長い方（西回り）」を強制する。
+ * Phase1(回り込み)・Phase2(ズーム) とも時間固定で、押してからズーム完了までが一定。
+ */
+function rotateWestThenZoom(lon, lat) {
+  const start = map.getCenter();
+  const startLng = start.lng;
+  const startLat = start.lat;
+  // 目的経度を現在の中心より西側へ正規化（同方向で回り込む）。
+  let targetLng = lon;
+  while (targetLng > startLng) targetLng -= 360;
+  const dLng = targetLng - startLng; // 西回りなので負
+
+  const t0 = performance.now();
+  function rotateFrame(now) {
+    const t = Math.min(1, (now - t0) / ROTATE_MS);
+    // ease-in-out で滑らかに（終端で減速し、その後のズームへ繋ぐ）。
+    const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    // setCenter を小刻みに呼ぶ＝1フレームの経度差は小さいので正規化に影響されず
+    // 連続して西へ回る。
+    map.setCenter([startLng + dLng * e, startLat + (lat - startLat) * e]);
+    if (t < 1) {
+      requestAnimationFrame(rotateFrame);
+    } else {
+      // Phase2: その場でズームイン（横移動なし＝ズームアウトしない）。
+      map.easeTo({ center: [lon, lat], zoom: FIRST_FIX_ZOOM, duration: DIVE_MS, essential: true });
+      map.once('moveend', () => {
+        initialFlyInProgress = false;
+      });
+    }
+  }
+  requestAnimationFrame(rotateFrame);
+}
+
+/**
  * Mapbox 地図を初期化する。token は Workers 経由で取得した公開トークン(pk)。
  */
 export function initMap(containerId, token) {
@@ -58,10 +147,29 @@ export function initMap(containerId, token) {
   map = new mapboxgl.Map({
     container: containerId,
     style: STANDARD_STYLE,
+    projection: 'globe', // 地球俯瞰。Standard は既定で globe だが意図を明示する。
     center: INITIAL_CENTER,
     zoom: INITIAL_ZOOM,
     attributionControl: true, // 規約上、出典表記は表示したまま
   });
+
+  // E2E テストから地図状態（中心経度・ズーム）を読み取るための参照。読み取り専用用途。
+  if (typeof window !== 'undefined') window.__trMap = map;
+
+  // 地球俯瞰の自転演出のセットアップ。
+  // prefers-reduced-motion（動きを減らす設定）の端末では酔い対策で自転しない。
+  const reduceMotion =
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!reduceMotion) {
+    spinEnabled = true;
+    // moveend ごとに次の一手を打つことで継続的な自転になる。
+    map.on('moveend', spinGlobe);
+    // ユーザーが地図を触ったら主導権を渡し、自転は止める。
+    map.on('dragstart', stopSpin);
+    // 初回キック（load 後に最初の easeTo を発火させる）。
+    map.on('load', spinGlobe);
+  }
 
   // 現在地マーカー（mintグリーンの二重丸 SVG）。位置確定後に addTo する。
   const el = document.createElement('div');
@@ -97,7 +205,14 @@ export function initMap(containerId, token) {
         source: 'mapbox-dem',
         slot: 'bottom',
         layout: { visibility: 'none' },
-        paint: { 'hillshade-exaggeration': HILLSHADE_EXAGGERATION.weak },
+        // hillshade-exaggeration の変更を即時反映（既定の約300msアニメを無効化）。
+        // OFF時は visibility:none にするだけで誇張値は前回値(strong=1.0)が残るため、
+        // 次の OFF→弱 表示時に 1.0→0.7 のアニメが走り「一瞬濃く→薄く」見えてしまう。
+        // duration:0 で値をスナップさせ、このちらつきを消す。
+        paint: {
+          'hillshade-exaggeration': HILLSHADE_EXAGGERATION.weak,
+          'hillshade-exaggeration-transition': { duration: 0 },
+        },
       });
     }
     applyHillshade();
@@ -113,7 +228,14 @@ export function initMap(containerId, token) {
         source: 'track',
         slot: 'top',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#ff4d8c', 'line-width': 3, 'line-opacity': 0.9 },
+        // line-emissive-strength: 1 で Standard の 3D 照明を無視し、
+        // 夜の lightPreset でもマゼンタのまま発光させる（夜に黒く沈む対策）。
+        paint: {
+          'line-color': '#ff4d8c',
+          'line-width': 3,
+          'line-opacity': 0.9,
+          'line-emissive-strength': 1,
+        },
       });
     }
 
@@ -173,8 +295,34 @@ export function updateCurrentLocation(lat, lon, isFirst = false) {
     marker.addTo(map);
     markerAdded = true;
   }
-  const zoom = isFirst ? FIRST_FIX_ZOOM : map.getZoom();
-  map.easeTo({ center: [lon, lat], zoom, duration: 300 });
+  // 初回ズームは「app 側の isFirst」だけでなく「まだ寄っていないか」でも判定する。
+  // globe 描画で style.load が遅れると初回 fix が pendingLocation 経由になり、
+  // 2 件目以降で isFirst=false に上書きされて flyTo が一度も発火しない事故を防ぐ。
+  if (isFirst || !didInitialZoom) {
+    // 初回の位置確定: 自転と同じ向き（西回り）を保ったまま現在地まで回り込み、
+    // その場でズームインする。最短経路の flyTo だと自転と逆向きに戻って
+    // 「逆回転」して気持ち悪いので、わざと同方向で回り込む。
+    // flyTo に遠回りの経度を渡すと大きくズームアウトしてしまうため、
+    // 回り込み(Phase1)とズーム(Phase2)を分け、Phase1 は easeTo で横移動だけ、
+    // Phase2 はその場でズームだけ、にしてズームアウトを防ぐ。
+    didInitialZoom = true;
+    stopSpin();
+    // 回り込み・ズーム中は後続 GPS 更新の easeTo を抑止する（割り込み防止）。
+    initialFlyInProgress = true;
+
+    // 西回りで回り込み(Phase1)→その場でズーム(Phase2)。詳細はヘルパー参照。
+    rotateWestThenZoom(lon, lat);
+    // moveend が来ない異常時の保険。合計時間＋余裕で必ず解除する。
+    setTimeout(() => {
+      initialFlyInProgress = false;
+    }, ROTATE_MS + DIVE_MS + 1500);
+  } else {
+    // 初回ズームイン飛行中は中心追従を見送る（flyTo を止めないため）。
+    // マーカー位置は上で更新済みなので現在地マーカーは動き続ける。
+    if (initialFlyInProgress) return;
+    // 2 回目以降は現在のズームを保ったまま中心だけ滑らかに追従。
+    map.easeTo({ center: [lon, lat], zoom: map.getZoom(), duration: 300 });
+  }
 }
 
 export function addTrackPoint(lat, lon) {
