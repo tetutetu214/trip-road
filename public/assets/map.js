@@ -110,33 +110,40 @@ function stopSpin() {
  * Phase1(回り込み)・Phase2(ズーム) とも時間固定で、押してからズーム完了までが一定。
  */
 function rotateWestThenZoom(lon, lat) {
-  const start = map.getCenter();
-  const startLng = start.lng;
-  const startLat = start.lat;
+  const startLng = map.getCenter().lng;
+  const startLat = map.getCenter().lat;
   // 目的経度を現在の中心より西側へ正規化（同方向で回り込む）。
   let targetLng = lon;
   while (targetLng > startLng) targetLng -= 360;
-  const dLng = targetLng - startLng; // 西回りなので負
+  const arc = startLng - targetLng; // 0〜360（西回りの総回転量）
 
-  const t0 = performance.now();
-  function rotateFrame(now) {
-    const t = Math.min(1, (now - t0) / ROTATE_MS);
-    // ease-in-out で滑らかに（終端で減速し、その後のズームへ繋ぐ）。
-    const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-    // setCenter を小刻みに呼ぶ＝1フレームの経度差は小さいので正規化に影響されず
-    // 連続して西へ回る。
-    map.setCenter([startLng + dLng * e, startLat + (lat - startLat) * e]);
-    if (t < 1) {
-      requestAnimationFrame(rotateFrame);
-    } else {
-      // Phase2: その場でズームイン（横移動なし＝ズームアウトしない）。
-      map.easeTo({ center: [lon, lat], zoom: FIRST_FIX_ZOOM, duration: DIVE_MS, essential: true });
-      map.once('moveend', () => {
-        initialFlyInProgress = false;
-      });
-    }
+  // Phase1: 西回りで回り込む。1ステップを 180°未満に分割し easeTo でつなぐ。
+  // easeTo は差分<180°なら最短経路＝西回りに動き、かつ rAF+setCenter と違って
+  // アニメーション中にタイルをストリーミング読込するので途中が黒くならない
+  // （rAF+setCenter は瞬間移動の連続でタイルが追いつかず真っ黒になっていた）。
+  const steps = Math.max(1, Math.ceil(arc / 120));
+  const stepDeg = arc / steps;
+  const stepMs = ROTATE_MS / steps;
+
+  let i = 0;
+  function nextStep() {
+    i += 1;
+    const to = startLng - stepDeg * i; // 西へ stepDeg ずつ
+    const last = i >= steps;
+    map.easeTo({ center: [to, startLat], duration: stepMs, easing: (n) => n, essential: true });
+    map.once('moveend', () => {
+      if (last) {
+        // Phase2: その場でズームイン（横移動なし＝ズームアウトしない）。
+        map.easeTo({ center: [lon, lat], zoom: FIRST_FIX_ZOOM, duration: DIVE_MS, essential: true });
+        map.once('moveend', () => {
+          initialFlyInProgress = false;
+        });
+      } else {
+        nextStep();
+      }
+    });
   }
-  requestAnimationFrame(rotateFrame);
+  nextStep();
 }
 
 /**
