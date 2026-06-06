@@ -101,6 +101,45 @@ function stopSpin() {
 }
 
 /**
+ * 自転と同じ西回り（経度が減る向き）を保ったまま現在地経度まで地球を回し込み、
+ * 到達後にその場でズームインする。
+ *
+ * easeTo / flyTo に絶対経度（lon-360 等）を渡すと Mapbox が最短の同位置へ
+ * 正規化してしまい、結局逆回転（東向き）になる。これを避けるため Phase1 は
+ * requestAnimationFrame で経度を少しずつ減らして「長い方（西回り）」を強制する。
+ * Phase1(回り込み)・Phase2(ズーム) とも時間固定で、押してからズーム完了までが一定。
+ */
+function rotateWestThenZoom(lon, lat) {
+  const start = map.getCenter();
+  const startLng = start.lng;
+  const startLat = start.lat;
+  // 目的経度を現在の中心より西側へ正規化（同方向で回り込む）。
+  let targetLng = lon;
+  while (targetLng > startLng) targetLng -= 360;
+  const dLng = targetLng - startLng; // 西回りなので負
+
+  const t0 = performance.now();
+  function rotateFrame(now) {
+    const t = Math.min(1, (now - t0) / ROTATE_MS);
+    // ease-in-out で滑らかに（終端で減速し、その後のズームへ繋ぐ）。
+    const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    // setCenter を小刻みに呼ぶ＝1フレームの経度差は小さいので正規化に影響されず
+    // 連続して西へ回る。
+    map.setCenter([startLng + dLng * e, startLat + (lat - startLat) * e]);
+    if (t < 1) {
+      requestAnimationFrame(rotateFrame);
+    } else {
+      // Phase2: その場でズームイン（横移動なし＝ズームアウトしない）。
+      map.easeTo({ center: [lon, lat], zoom: FIRST_FIX_ZOOM, duration: DIVE_MS, essential: true });
+      map.once('moveend', () => {
+        initialFlyInProgress = false;
+      });
+    }
+  }
+  requestAnimationFrame(rotateFrame);
+}
+
+/**
  * Mapbox 地図を初期化する。token は Workers 経由で取得した公開トークン(pk)。
  */
 export function initMap(containerId, token) {
@@ -113,6 +152,9 @@ export function initMap(containerId, token) {
     zoom: INITIAL_ZOOM,
     attributionControl: true, // 規約上、出典表記は表示したまま
   });
+
+  // E2E テストから地図状態（中心経度・ズーム）を読み取るための参照。読み取り専用用途。
+  if (typeof window !== 'undefined') window.__trMap = map;
 
   // 地球俯瞰の自転演出のセットアップ。
   // prefers-reduced-motion（動きを減らす設定）の端末では酔い対策で自転しない。
@@ -268,25 +310,8 @@ export function updateCurrentLocation(lat, lon, isFirst = false) {
     // 回り込み・ズーム中は後続 GPS 更新の easeTo を抑止する（割り込み防止）。
     initialFlyInProgress = true;
 
-    // 目的経度を現在の中心経度より西側へ正規化し、同方向（西回り）で到達させる。
-    let targetLng = lon;
-    const cur = map.getCenter().lng;
-    while (targetLng > cur) targetLng -= 360;
-
-    // Phase1: 地球儀のまま現在地経度まで西へ回り込む（zoom は指定せず現状維持）。
-    map.easeTo({ center: [targetLng, lat], duration: ROTATE_MS, essential: true });
-    // Phase1 完了 → Phase2: その場でズームイン（横移動なし＝ズームアウトしない）。
-    map.once('moveend', () => {
-      map.easeTo({
-        center: [targetLng, lat],
-        zoom: FIRST_FIX_ZOOM,
-        duration: DIVE_MS,
-        essential: true,
-      });
-      map.once('moveend', () => {
-        initialFlyInProgress = false;
-      });
-    });
+    // 西回りで回り込み(Phase1)→その場でズーム(Phase2)。詳細はヘルパー参照。
+    rotateWestThenZoom(lon, lat);
     // moveend が来ない異常時の保険。合計時間＋余裕で必ず解除する。
     setTimeout(() => {
       initialFlyInProgress = false;
