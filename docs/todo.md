@@ -633,10 +633,11 @@ Codex はモデルエラーで使用不可だったため Claude Code 単独で�
 - [x] Vitest 145件 pass（planRatingClick 5件追加）
 - [x] フロント本番デプロイ（`deploy_frontend.sh`、Deployment `1d3e1147`）→ 本番アセットに planRatingClick・配線前倒し反映を確認
 - [x] 本番 E2E 再実行（main+history × chromium 系2プロジェクト、16 passed / 2 failed）。**rating test#5 と history ナビゲーション系は緑化**を確認
-- [ ] PR 作成・マージ
-- 残2件はスコープ外の既存問題:
-  - `history.spec.js` diag（desktop-chromium のみ）: `touchscreen.tap` は hasTouch 必須で desktop 無効 → diag テストを touch 有効プロジェクト限定に skip すべき（テスト設定。iphone-emulated は PASS）
-  - `main.spec.js` test#4 visibilitychange 地図サイズ: Mapbox `map.resize()` 系の別件（要個別調査）
+- [x] history diag を touch 有効プロジェクト限定に skip（コミット ca6f401）→ history 7 passed / 1 skipped / 0 failed
+- [x] PR 作成（**#74**）。マージはてつてつ判断
+- 残課題:
+  - [x] `history.spec.js` diag（desktop-chromium のみ）: touch 限定 skip で解消
+  - [ ] `main.spec.js` test#4 visibilitychange 地図サイズ: Mapbox の別件として **#73** を起票（本PR対象外）
 
 ### E2E 実行で判明した課題（2026-06-07、要対応）
 
