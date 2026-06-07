@@ -619,9 +619,38 @@ Issue #46 の opacity 0.3 は控えめという実機フィードバックを受
 - [x] app.js: クリックで `updateTelemetry(traceId, {user_rating})`、切替時リセット、解説確定時に表示
 - [x] Vitest: nextRating 6件 + setRatingState/show/hide 5件（全 140 件 pass）
 - [x] E2E: rating 表示・トグル・localStorage 記録の検証（本番反映後に流す）
-- [ ] PR 作成・マージ・本番反映
-- [ ] 本番反映後に E2E 実行（`source ~/.secrets/trip-road.env && npm run test:e2e`）→ スクショ確認
+- [x] PR 作成・マージ・本番反映（フロントは #72 デプロイ済、rating ボタン本番反映確認）
+- [~] 本番反映後に E2E 実行（`set -a && source ~/.secrets/trip-road.env && set +a && npm run test:e2e`）→ rating 機能は本番で正常動作を実測確認。ただし E2E test#5 は GPS 確定待ち不足で際どく失敗（テスト側の不備、後述）
 - [ ] Athena で `user_rating` がクエリできることを確認（データ蓄積後）
+
+### E2E 課題への対応状況（2026-06-07、ブランチ `fix/main-screen-init-races`）
+
+Codex はモデルエラーで使用不可だったため Claude Code 単独で実装（フォールバック）。
+
+- [x] **修正1 fix(rating)**: `app.js` の `showRating()` を `if (currentTraceId)` の外へ出し、有効説明文時は sampling と無関係に常時表示。`handleRatingClick` は trace 無しなら遅延発行して必ず記録（受動テレメトリのみ sampling）。判断を純粋関数 `planRatingClick`（telemetry.js）に切り出し、起動時キャッシュ表示経路でも rating 表示
+- [x] **修正2 fix(map)**: フッターボタン（⚙️/⛰️/👍👎/🗺️）のリスナ装着を `await getMapboxToken()` より前へ。地図依存の hillshade 初期適用のみ initMap 後に残す。約375msの未配線ウィンドウを解消
+- [x] **修正3 test(e2e)**: main.spec test#5 に `muni-name` 確定待ち + rating timeout 10s、history.spec `enterHistoryScreen` に `waitForResponse('/api/mapbox-token')`
+- [x] Vitest 145件 pass（planRatingClick 5件追加）
+- [ ] フロント本番デプロイ（`deploy_frontend.sh`）→ 本番 E2E 再実行で rating/history 緑化を確認
+- [ ] PR 作成・マージ
+
+### E2E 実行で判明した課題（2026-06-07、要対応）
+
+VSCode 中断分の続きで本番 E2E（39件、chromium-iphone / desktop-chromium / webkit-iphone × 各テスト）を実行した結果：
+
+- **rating test#5 はテスト側の不備（実害なし）**: 実測で `/api/describe` 1回・rating は t=5.0s で表示・説明文も新プロンプトで正常生成（久喜市の鷲宮砂丘が核）。test#3 は `muni-name` が「現在地を取得中...」から変わるのを待つが、**test#5 はこの GPS 確定待ちを省略**。skeleton は起動直後（ロード前）も `hidden` のため待機が即通過し、GPS 確定前に rating を 5s で確認して失敗。→ test#5 に muni-name 同期を足すか toBeVisible の timeout を伸ばす
+- **潜在バグ: rating 表示がテレメトリ sampling に結合**: `app.js` の `showRating()` は `if (currentTraceId)` 内のみ。現状 `TELEMETRY_SAMPLE_RATE=1.0` なので常に表示されるが、運用で 0.1〜0.2 に下げると 👍/👎 が 80〜90% のセッションで出なくなる。表示と記録を分離する（表示は常時、記録のみ sampling 判定）必要あり
+- **webkit-iphone 全滅は環境起因**: `browserType.launch` 失敗＝WebKit 未インストール。`sudo npx playwright install-deps webkit` 1回で解消（実バグではない）
+- **history.spec.js 全滅（chromium/desktop 両方）= Mapbox 移行起因の配線競合（履歴機能自体は正常）**: 調査の結果、`#history-open`（🗺️）は `showMainScreen()`（app.js 121行）で即可視になるが、click リスナ装着は `await getMapboxToken()`（125行・約145ms）を挟んだ後の 222〜229行。可視〜配線の間に**約375msの「リスナ未装着ウィンドウ」**があり、テストはこの隙にクリック→`<a href="#">`が無反応→`#history-screen` が hidden のままタイムアウト。CDP 実測で「即時クリック=FAIL／1秒待機=PASS／occlusion ではない」を確認。`/api/conquests`・geojson・DynamoDB 同期はすべて 200。Leaflet 時代はトークン取得が無く配線がほぼ同期だったため顕在化しなかった。
+  - 対応: **(本番コード)** フッターボタンのリスナ装着を `await getMapboxToken()` より前（`showMainScreen()` 直後）に移す。実機の遅い回線でも表示直後の 🗺️ タップが無反応になる UX 問題も同時に解消。**(テスト)** `enterHistoryScreen` でクリック前に `waitForResponse('**/api/mapbox-token')` か、クリックを `toPass` でリトライ
+
+### #71 たより事実核型改善の本番 Worker デプロイ（2026-06-07、VSCode 中断分の続き）
+
+`nova.js` の Generator プロンプト改善（固有事実核型・羅列禁止・名物/由来優先）と `DESCRIPTION_VERSION=2` を本番反映。中断時はコミット済・フロントのみデプロイ済で Worker 未反映だった。
+
+- [x] Worker 本番デプロイ（`bash deploy_production.sh`、Version ID `e30833e0`）
+- [x] 本番 curl 検証：鎌倉市 200 / judge_passed:true / faithfulness 5 / nova-pro、認証失敗 401、別パス 404
+- [x] 理解度テスト（本番デプロイ軸）全問正解 → knowledge.md「学習済み概念」に追記
 
 ### さらに先（無時系列、検討候補）
 
