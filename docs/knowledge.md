@@ -2089,3 +2089,21 @@ iPhone Safari メモリ予算（~1 GB）内に十分収まる。Cloudflare Pages
 - **起動時の画**: 以前は `center [138,35.5] / zoom 5`（関東全体）から GPS 確定で `easeTo` ズーム。日本全体（`center [137.5,37.5] / zoom 4`）始まりに変え、初回 fix を `flyTo`(duration 3500, curve 1.6) にして「日本全体→現在地へ寄る」演出にした。2回目以降の追従は従来どおり `easeTo` で現ズーム維持。
 - **陰影の誇張不足**: weak0.4/strong0.7 は効果が薄かったため weak0.7/strong1.0（上限）に引き上げ。デフォルトは off 据え置き（てつてつ判断）。
 - **トグル時の「一瞬濃く→薄く」ちらつき**: paint プロパティは Mapbox 既定で約300msアニメーションする。OFF時は `visibility:none` にするだけで `hillshade-exaggeration` の値は前回(strong=1.0)が残るため、次の OFF→弱 表示時に 1.0→0.7 のアニメが走り、表示瞬間に濃く出てから薄く落ちる。`paint` に **`'hillshade-exaggeration-transition': { duration: 0 }`** を入れて値をスナップさせれば消える。色付きレイヤーの値を JS から動的に切り替えるときは、この既定トランジションの存在に注意。
+
+## 7. Issue #17 👍/👎 明示フィードバックボタン（2026-06-07）
+
+### 設計
+
+「土地のたより」カードに 👍/👎 を付け、表示中 entry の `user_rating`（'up'/'down'/null）をテレメトリに記録する。用途は **集計のみ**（Athena で `WHERE user_rating='down'` を抽出し、Plan I が苦手な市町村パターンを特定）。👍 を LLM の Few-shot 学習素材にする経路（#18）は、Plan I の「Wikipedia 抜粋を唯一の情報源にする in-context 要約特化」と相性が悪い（抜粋外の表現を誘発し忠実性を崩す）ため不採用。
+
+- **Worker 変更不要**: `/api/telemetry` は受け取った `entries` 配列を中身を見ずに `JSON.stringify` して S3 PUT するだけ。フロントが entry に `user_rating` を入れれば自動で永続化される。`user_rating` フィールド自体は Plan D Stage 1 で器だけ用意済だった。
+- **トグルは純粋関数**: `nextRating(current, clicked)` を `telemetry.js` に切り出し（同ボタン再タップで null に戻す）、Vitest でテスト。
+- **表示制御**: `ui.js` に `setRatingState`/`showRating`/`hideRating`。有効な解説が出たとき（キャッシュ/生成成功で `currentTraceId` あり）だけ表示。ローディング・記事なし・失敗時は隠す。市町村切替で新 trace_id 発行時に `currentRating=null` リセット＋一旦 hide。
+- **flush は既存経路に委譲**: rating は `updateTelemetry` で localStorage に反映するだけ。表示中 entry は `dwell_ms` 未確定のため flush 対象外で、市町村切替・60秒タイマーで送信される（評価しても即送信されないのは仕様通り）。
+- UI: カード右下、48×48px タップ領域、active 時に 👍=緑 / 👎=赤の薄背景。
+
+### 学習済み概念（理解度テスト 2026-06-07 全問正解、PR 直前テストはこの記録によりスキップ可）
+
+- **テレメトリ記録の仕組み**: Worker は entries をそのまま JSON 化して S3 へ PUT するので、フロント側で entry にフィールドを足すだけで記録できる（Worker は変更不要）。
+- **flush の挙動**: 表示中 entry は dwell_ms 未確定のため flush 対象外。切替・離脱で確定してから送られる。
+- **Plan I と Few-shot の相性**: 抜粋を唯一の情報源にする方針に 👍 例文の Few-shot を混ぜると抜粋外表現を誘発し忠実性を崩すため不採用。

@@ -32,7 +32,7 @@ import { initMap, updateCurrentLocation, addTrackPoint, setTrack, clearTrack, se
 import { filterTodayPoints, isSameLocalDay } from './track_filter.js';
 import { startWatching } from './geo.js';
 import { fetchElevation, createElevationUpdater } from './elevation.js';
-import { generateTraceId, buildTelemetryEntry, shouldSample } from './telemetry.js';
+import { generateTraceId, buildTelemetryEntry, shouldSample, nextRating } from './telemetry.js';
 import { shouldEnterSwitchFlow } from './switch_flow.js';
 import {
   showPasswordScreen, showMainScreen,
@@ -43,6 +43,7 @@ import {
   setDescriptionNoWikipedia, clearDescription,
   setGpsActive, setPermissionDenied,
   setDebugInfo,
+  setRatingState, showRating, hideRating,
 } from './ui.js';
 
 let currentMuniCd = null;
@@ -70,6 +71,9 @@ let currentJudgeData = null;
 const TELEMETRY_SAMPLE_RATE = 1.0;  // 初期 100%、運用で 0.1〜0.2 に下げる
 let currentTraceId = null;
 let currentDisplayStartMs = null;
+// Issue #17: 表示中カードの 👍 / 👎 状態（'up' / 'down' / null）。
+// 市町村切替で新しい trace_id を発行するたびに null へリセットする。
+let currentRating = null;
 
 // === テレメトリ自動 flush 設定 ===
 // 市町村切替のたびに、確定した直前 entry を即 S3 へ送信する。
@@ -188,6 +192,16 @@ async function enterMainApp(password) {
       applyHillshadeLayer(next);
       setHillshadeToggleState(next);
     });
+  }
+
+  // Issue #17: 👍 / 👎 明示フィードバックボタン。
+  // 表示中カードの trace_id の entry に user_rating を記録する。
+  // 同じボタン再タップで取り消し（null）。flush は既存経路（切替/60秒タイマー）に任せる。
+  const ratingUpBtn = document.getElementById('rating-up');
+  const ratingDownBtn = document.getElementById('rating-down');
+  if (ratingUpBtn && ratingDownBtn) {
+    ratingUpBtn.addEventListener('click', () => handleRatingClick('up'));
+    ratingDownBtn.addEventListener('click', () => handleRatingClick('down'));
   }
 
   // 標高更新（Issue #46）。GPS coords.altitude が取れればそれを使い、
@@ -335,6 +349,12 @@ async function handlePosition({ lat, lon, speed, altitude }, password) {
     currentTraceId = sampled ? generateTraceId() : null;
     currentDisplayStartMs = null;
 
+    // Issue #17: 新カードに切り替わったので 👍 / 👎 をリセットして一旦隠す。
+    // 解説が確定した時点（キャッシュ/生成成功）で showRating() する。
+    currentRating = null;
+    setRatingState(null);
+    hideRating();
+
     tryFlushTelemetry(password);
 
     if (cached) {
@@ -350,6 +370,7 @@ async function handlePosition({ lat, lon, speed, altitude }, password) {
         }));
         currentDisplayStartMs = Date.now();
         updateTelemetry(currentTraceId, { ts_displayed: currentDisplayStartMs });
+        showRating();  // Issue #17: 有効な解説が出たので 👍 / 👎 を表示
       }
     } else {
       setDescriptionLoading();
@@ -425,6 +446,7 @@ async function handlePosition({ lat, lon, speed, altitude }, password) {
             }));
             currentDisplayStartMs = Date.now();
             updateTelemetry(currentTraceId, { ts_displayed: currentDisplayStartMs });
+            showRating();  // Issue #17: 有効な解説が出たので 👍 / 👎 を表示
           }
         }
       } else if (result.status === 401) {
@@ -449,6 +471,17 @@ function finalizeCurrentTelemetry() {
       dwell_ms: ts_left - currentDisplayStartMs,
     });
   }
+}
+
+// === Issue #17: 👍 / 👎 クリック処理 ===
+// 表示中 entry の user_rating を更新する。trace_id が無い（サンプリング外）ときは無視。
+// 同じボタン再タップで null（取り消し）に戻す。updateTelemetry で localStorage に反映し、
+// flush は既存の自動経路（市町村切替・60 秒タイマー）に任せる。
+function handleRatingClick(clicked) {
+  if (!currentTraceId) return;
+  currentRating = nextRating(currentRating, clicked);
+  updateTelemetry(currentTraceId, { user_rating: currentRating });
+  setRatingState(currentRating);
 }
 
 // === GPS エラー処理 ===

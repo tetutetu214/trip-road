@@ -66,6 +66,44 @@ test.describe('trip-road メイン画面 E2E', () => {
     expect(criticalErrors).toEqual([]);
   });
 
+  test('5. 解説表示後に 👍/👎 が出てトグル記録できる（Issue #17）', async ({ page }) => {
+    await page.goto('/');
+    await page.locator('#password-input').fill(APP_PASSWORD);
+    await page.locator('#password-submit').click();
+    await expect(page.locator('#main-screen')).toBeVisible();
+
+    // 解説が確定する（skeleton が消える）と rating 行が表示される
+    await expect(page.locator('#description-skeleton')).toBeHidden({ timeout: 30000 });
+    const rating = page.locator('#tayori-rating');
+    await expect(rating).toBeVisible();
+
+    const up = page.locator('#rating-up');
+    const down = page.locator('#rating-down');
+
+    // 初期は未選択
+    await expect(up).toHaveAttribute('aria-pressed', 'false');
+    await expect(down).toHaveAttribute('aria-pressed', 'false');
+
+    // 👍 を押すと up だけが選択状態になる
+    await up.click();
+    await expect(up).toHaveAttribute('aria-pressed', 'true');
+    await expect(down).toHaveAttribute('aria-pressed', 'false');
+
+    // localStorage の telemetry に user_rating='up' が記録される
+    const recorded = await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem('trip-road-state') || '{}');
+      const rated = (s.telemetry || []).filter((e) => e.user_rating != null);
+      return rated.length ? rated[rated.length - 1].user_rating : null;
+    });
+    expect(recorded).toBe('up');
+
+    // 同じ 👍 を再タップすると取り消されて未選択に戻る
+    await up.click();
+    await expect(up).toHaveAttribute('aria-pressed', 'false');
+
+    await page.screenshot({ path: 'tests/e2e/results/05-rating.png' });
+  });
+
   test('4. visibilitychange 後も地図サイズが正しく保たれる（バグ修正検証）', async ({ page }) => {
     await page.goto('/');
     await page.locator('#password-input').fill(APP_PASSWORD);

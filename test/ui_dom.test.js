@@ -14,6 +14,9 @@ import {
     setDescriptionLoadingPhase,
     setElevation,
     setHillshadeToggleState,
+    setRatingState,
+    showRating,
+    hideRating,
 } from '../public/assets/ui.js';
 
 function makeEl() {
@@ -47,13 +50,19 @@ beforeEach(() => {
         'description-loading-text': makeEl(),
         elevation: makeEl(),
         'hillshade-toggle': makeEl(),
+        'tayori-rating': makeEl(),
+        'rating-up': makeEl(),
+        'rating-down': makeEl(),
     };
-    // hillshade-toggle に最小限の属性 API を追加
-    els['hillshade-toggle'].attrs = {};
-    els['hillshade-toggle'].setAttribute = function (k, v) { this.attrs[k] = v; };
-    els['hillshade-toggle'].getAttribute = function (k) { return this.attrs[k] ?? null; };
+    // setAttribute / getAttribute を使う要素に最小限の属性 API を足す
+    for (const id of ['hillshade-toggle', 'rating-up', 'rating-down']) {
+        els[id].attrs = {};
+        els[id].setAttribute = function (k, v) { this.attrs[k] = v; };
+        els[id].getAttribute = function (k) { return this.attrs[k] ?? null; };
+    }
     els['description-skeleton'].classList.add('hidden');
     els['description-loading-text'].classList.add('hidden');
+    els['tayori-rating'].classList.add('hidden');
     globalThis.document = {
         getElementById: (id) => els[id] ?? null,
     };
@@ -143,6 +152,41 @@ describe('setElevation (Issue #46)', () => {
     it('undefined も "--" 表示', () => {
         setElevation(undefined);
         expect(els.elevation.textContent).toBe('--');
+    });
+});
+
+describe('setRatingState (Issue #17)', () => {
+    it("'up' で 👍 に rating-active と aria-pressed=true が付き、👎 は付かない", () => {
+        setRatingState('up');
+        expect(els['rating-up'].classList.contains('rating-active')).toBe(true);
+        expect(els['rating-up'].getAttribute('aria-pressed')).toBe('true');
+        expect(els['rating-down'].classList.contains('rating-active')).toBe(false);
+        expect(els['rating-down'].getAttribute('aria-pressed')).toBe('false');
+    });
+    it("'down' で 👎 だけ rating-active になる", () => {
+        setRatingState('down');
+        expect(els['rating-down'].classList.contains('rating-active')).toBe(true);
+        expect(els['rating-up'].classList.contains('rating-active')).toBe(false);
+    });
+    it('null で両方の rating-active が外れ aria-pressed=false に戻る', () => {
+        setRatingState('up');
+        setRatingState(null);
+        expect(els['rating-up'].classList.contains('rating-active')).toBe(false);
+        expect(els['rating-down'].classList.contains('rating-active')).toBe(false);
+        expect(els['rating-up'].getAttribute('aria-pressed')).toBe('false');
+        expect(els['rating-down'].getAttribute('aria-pressed')).toBe('false');
+    });
+});
+
+describe('showRating / hideRating (Issue #17)', () => {
+    it('showRating で hidden が外れる', () => {
+        showRating();
+        expect(els['tayori-rating'].classList.contains('hidden')).toBe(false);
+    });
+    it('hideRating で hidden が付く', () => {
+        showRating();
+        hideRating();
+        expect(els['tayori-rating'].classList.contains('hidden')).toBe(true);
     });
 });
 
