@@ -4,6 +4,7 @@ import {
   buildTelemetryEntry,
   shouldSample,
   nextRating,
+  planRatingClick,
 } from '../public/assets/telemetry.js';
 
 describe('generateTraceId', () => {
@@ -154,5 +155,45 @@ describe('shouldSample', () => {
     for (let i = 0; i < 1000; i++) if (shouldSample(0.5)) trues++;
     expect(trues).toBeGreaterThan(350);
     expect(trues).toBeLessThan(650);
+  });
+});
+
+describe('planRatingClick (Issue #17 評価は常に記録)', () => {
+  it('説明文が出ていなければ無視する', () => {
+    const plan = planRatingClick({
+      hasTrace: true, hasDescription: false, currentRating: null, clicked: 'up',
+    });
+    expect(plan).toBeNull();
+  });
+
+  it('サンプリング外（trace なし）でも記録する: 新規 trace 発行を要求する', () => {
+    const plan = planRatingClick({
+      hasTrace: false, hasDescription: true, currentRating: null, clicked: 'up',
+    });
+    expect(plan).not.toBeNull();
+    expect(plan.needNewTrace).toBe(true);
+    expect(plan.userRating).toBe('up');
+  });
+
+  it('サンプリング当選（trace あり）では新規 trace を発行しない', () => {
+    const plan = planRatingClick({
+      hasTrace: true, hasDescription: true, currentRating: null, clicked: 'down',
+    });
+    expect(plan.needNewTrace).toBe(false);
+    expect(plan.userRating).toBe('down');
+  });
+
+  it('同じボタン再タップで評価を取り消す（null に戻す）', () => {
+    const plan = planRatingClick({
+      hasTrace: true, hasDescription: true, currentRating: 'up', clicked: 'up',
+    });
+    expect(plan.userRating).toBeNull();
+  });
+
+  it('👍 から 👎 へ切り替えできる', () => {
+    const plan = planRatingClick({
+      hasTrace: true, hasDescription: true, currentRating: 'up', clicked: 'down',
+    });
+    expect(plan.userRating).toBe('down');
   });
 });

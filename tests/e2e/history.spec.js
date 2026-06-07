@@ -62,13 +62,28 @@ async function enterHistoryScreen(page) {
   // 🗺️ ボタンが表示されるまで待つ
   const historyBtn = page.locator('#history-open');
   await expect(historyBtn).toBeVisible();
+
+  // 配線完了を待ってからクリックする。フッターボタンのリスナは
+  // /api/mapbox-token の取得を含む enterMainApp 内で装着されるため、
+  // ボタン可視〜リスナ装着の間にクリックすると無反応になりうる
+  // （Mapbox 移行で顕在化）。本番コード側でも配線を前倒し済みだが、
+  // テストでも token 応答を待って二重に安全側へ倒す。
+  await page.waitForResponse(
+    (r) => r.url().includes('/api/mapbox-token'),
+    { timeout: 15000 },
+  ).catch(() => { /* トークン取得失敗時もボタンは機能するので続行 */ });
   await historyBtn.click();
 
   await expect(page.locator('#history-screen')).toBeVisible({ timeout: 10000 });
 }
 
 test.describe('踏破履歴ビュー E2E', () => {
-  test('diag: 関東タップ前後の内部状態と Canvas hit testing の検証', async ({ page }) => {
+  test('diag: 関東タップ前後の内部状態と Canvas hit testing の検証', async ({ page }, testInfo) => {
+    // この diag テストは page.touchscreen.tap() を使うため、touch 無効の
+    // desktop-chromium では実行できない（hasTouch must be enabled）。
+    // touch 有効プロジェクト（iphone-emulated 等）限定で走らせる。
+    test.skip(!testInfo.project.use.hasTouch, 'touchscreen.tap を使うため touch 有効プロジェクト限定');
+
     const consoleErrors = [];
     page.on('console', (msg) => {
       if (msg.type() === 'error') consoleErrors.push(msg.text());

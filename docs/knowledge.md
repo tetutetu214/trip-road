@@ -2107,3 +2107,19 @@ iPhone Safari メモリ予算（~1 GB）内に十分収まる。Cloudflare Pages
 - **テレメトリ記録の仕組み**: Worker は entries をそのまま JSON 化して S3 へ PUT するので、フロント側で entry にフィールドを足すだけで記録できる（Worker は変更不要）。
 - **flush の挙動**: 表示中 entry は dwell_ms 未確定のため flush 対象外。切替・離脱で確定してから送られる。
 - **Plan I と Few-shot の相性**: 抜粋を唯一の情報源にする方針に 👍 例文の Few-shot を混ぜると抜粋外表現を誘発し忠実性を崩すため不採用。
+
+### 学習済み概念（本番デプロイ軸、理解度テスト 2026-06-07 全問正解）
+
+VSCode アップデートで中断した #71（nova.js プロンプト改善）の本番 Worker デプロイ前に実施。以降この3点は同種デプロイ時スキップ可。
+
+- **デプロイ直後は誰の説明文も変わらない**: Worker をデプロイしても即時には文章は変化しない。フロントの `DESCRIPTION_VERSION=2` と localStorage の版数が不一致の市町村を次に訪問した時、Worker へ再生成要求が飛んで初めて新プロンプトの文章が出る。
+- **課金は再生成ごとの Bedrock Nova トークン**: 版数不一致の市町村を再訪するたびに Generator(Nova) の入出力トークン課金が1回発生。Wikipedia/Wikidata の元データは Worker 側 Cache API が効くので二重課金しない。
+- **ロールバックは wrangler**: `wrangler rollback` / `wrangler versions deploy` で直前バージョンに即戻せる。コードは git にあるので revert→再 deploy でも可。不可逆操作ではない。
+
+### 学習済み概念（フロント本番デプロイ軸、理解度テスト 2026-06-07 全問正解）
+
+`fix/main-screen-init-races`（rating 表示分離・フッター配線前倒し）のフロント Pages デプロイ前に実施。
+
+- **デプロイで変わる UX**: rating が sampling と無関係に常時表示、画面表示直後の 🗺️ タップが無反応にならない（フッター配線が Mapbox トークン取得待ちより前になった）。
+- **「評価を常に記録」のコスト影響**: 未サンプル時に 👍/👎 を押したときだけ trace を遅延発行し 1 エントリ分の S3 書込が微増。評価はレアな明示操作なので微量。Nova 課金は生成を伴わないため発生しない。
+- **フロントのロールバック**: Cloudflare Pages は過去デプロイメントへロールバック可能。コードは git にあるので revert→`deploy_frontend.sh` 再実行でも戻せる。不可逆ではない。

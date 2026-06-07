@@ -72,10 +72,15 @@ test.describe('trip-road メイン画面 E2E', () => {
     await page.locator('#password-submit').click();
     await expect(page.locator('#main-screen')).toBeVisible();
 
+    // skeleton はアプリ起動直後（GPS 確定前・ロード開始前）も hidden なので、
+    // 先に GPS 確定（muni-name が「現在地を取得中...」から変わる）を待たないと
+    // skeleton の hidden 判定が早すぎて、解説ロード前に rating を見にいってしまう。
+    await expect(page.locator('#muni-name')).not.toHaveText('現在地を取得中...', { timeout: 30000 });
+
     // 解説が確定する（skeleton が消える）と rating 行が表示される
     await expect(page.locator('#description-skeleton')).toBeHidden({ timeout: 30000 });
     const rating = page.locator('#tayori-rating');
-    await expect(rating).toBeVisible();
+    await expect(rating).toBeVisible({ timeout: 10000 });
 
     const up = page.locator('#rating-up');
     const down = page.locator('#rating-down');
