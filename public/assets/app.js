@@ -32,7 +32,7 @@ import { initMap, updateCurrentLocation, addTrackPoint, setTrack, clearTrack, se
 import { filterTodayPoints, isSameLocalDay } from './track_filter.js';
 import { startWatching } from './geo.js';
 import { fetchElevation, createElevationUpdater } from './elevation.js';
-import { generateTraceId, buildTelemetryEntry, shouldSample, nextRating } from './telemetry.js';
+import { generateTraceId, buildTelemetryEntry, shouldSample, planRatingClick } from './telemetry.js';
 import { shouldEnterSwitchFlow } from './switch_flow.js';
 import {
   showPasswordScreen, showMainScreen,
@@ -74,6 +74,11 @@ let currentDisplayStartMs = null;
 // Issue #17: 表示中カードの 👍 / 👎 状態（'up' / 'down' / null）。
 // 市町村切替で新しい trace_id を発行するたびに null へリセットする。
 let currentRating = null;
+// Issue #17: 現在表示中の有効な説明文。サンプリングの有無に関わらず保持する。
+// 👍 / 👎 がサンプリング外セッションで押されたとき、この muni_code / 本文を使って
+// テレメトリエントリを遅延発行し、評価を必ず記録するために使う。null のときは
+// 有効な説明文が出ていない（記事なし・生成失敗・切替直後）状態を表す。
+let currentDescriptionText = null;
 
 // === テレメトリ自動 flush 設定 ===
 // 市町村切替のたびに、確定した直前 entry を即 S3 へ送信する。
@@ -119,42 +124,12 @@ function setupPasswordScreen() {
 // === メイン画面初期化 ===
 async function enterMainApp(password) {
   showMainScreen();
-  // Mapbox トークンを Worker から取得してから地図を初期化する。
-  // 取得失敗時は地図初期化をスキップし、アプリ全体はクラッシュさせない
-  // （現在地チップや土地のたよりなど地図以外の機能は引き続き動く）。
-  const tokenResult = await getMapboxToken(password);
-  if (tokenResult.ok) {
-    initMap('map', tokenResult.token);
-  } else {
-    console.warn('[app] Mapbox トークン取得に失敗、地図初期化をスキップ', tokenResult);
-  }
-  setVisitedCount(getVisitedCount());
 
-  // 既存軌跡を復元（今日の ts のものだけ描画。過去日分は localStorage に温存）
-  const state = loadState();
-  const todayPoints = filterTodayPoints(state.track, Date.now());
-  if (todayPoints.length > 0) {
-    setTrack(todayPoints);
-    lastTrackTs = todayPoints[todayPoints.length - 1].ts;
-  }
-
-  // 既存の現在地情報を表示（キャッシュ済要約があれば）
-  if (currentMuniCd && state.visited[currentMuniCd]) {
-    const v = state.visited[currentMuniCd];
-    setMuniName(v.name);
-    const cached = getCachedDescription(currentMuniCd);
-    if (cached) {
-      setDescription(cached);
-      currentJudgeData = { cached: true };
-      setDebugInfo(currentJudgeData, isDebugOn());
-    }
-  }
-
-  // GPS 監視開始
-  startWatching(
-    (pos) => handlePosition(pos, password),
-    (err) => handleGpsError(err),
-  );
+  // --- フッターボタン等のイベント配線を Mapbox トークン取得（await）より前に済ませる ---
+  // showMainScreen() でフッターボタンは即可視になる。一方 getMapboxToken() は
+  // ネットワーク待ちを伴うため、配線を await の後に置くと「ボタンは見えるが
+  // リスナ未装着」の数百ms の窓が生じ、その間のタップが無反応になる
+  // （Mapbox 移行で顕在化。実機の遅い回線でも同様の UX 不具合）。配線を先に出す。
 
   // 画面離脱時（タブ閉じ・最小化）に dwell_ms を確定
   window.addEventListener('beforeunload', finalizeCurrentTelemetry);
@@ -177,12 +152,10 @@ async function enterMainApp(password) {
   }
 
   // 陰影起伏図トグル（⛰️ ボタン）。Issue #48 で off → weak → strong → off の 3 段階循環に。
+  // click リスナはここで装着し、地図に依存する初期レイヤ適用は initMap 後に行う。
   const hillshadeBtn = document.getElementById('hillshade-toggle');
   if (hillshadeBtn) {
     const HILLSHADE_CYCLE = ['off', 'weak', 'strong'];
-    const initial = getHillshadeLevel();
-    applyHillshadeLayer(initial);
-    setHillshadeToggleState(initial);
     hillshadeBtn.addEventListener('click', (e) => {
       e.preventDefault();
       const cur = getHillshadeLevel();
@@ -195,8 +168,8 @@ async function enterMainApp(password) {
   }
 
   // Issue #17: 👍 / 👎 明示フィードバックボタン。
-  // 表示中カードの trace_id の entry に user_rating を記録する。
-  // 同じボタン再タップで取り消し（null）。flush は既存経路（切替/60秒タイマー）に任せる。
+  // 表示中カードに user_rating を記録する。サンプリング外でも handleRatingClick が
+  // trace を遅延発行して必ず記録する。同じボタン再タップで取り消し（null）。
   const ratingUpBtn = document.getElementById('rating-up');
   const ratingDownBtn = document.getElementById('rating-down');
   if (ratingUpBtn && ratingDownBtn) {
@@ -218,7 +191,7 @@ async function enterMainApp(password) {
     }
   }, TELEMETRY_FLUSH_INTERVAL_MS);
 
-  // 踏破履歴画面（Phase 13）: 🗺️ ボタンで開く + 起動時に未同期分を flush
+  // 踏破履歴画面（Phase 13）: 🗺️ ボタンで開く
   setupHistoryScreen();
   const historyBtn = document.getElementById('history-open');
   if (historyBtn) {
@@ -227,6 +200,59 @@ async function enterMainApp(password) {
       openHistoryScreen();
     });
   }
+
+  // --- ここから地図初期化（ネットワーク待ちを含む） ---
+  // Mapbox トークンを Worker から取得してから地図を初期化する。
+  // 取得失敗時は地図初期化をスキップし、アプリ全体はクラッシュさせない
+  // （現在地チップや土地のたよりなど地図以外の機能は引き続き動く）。
+  const tokenResult = await getMapboxToken(password);
+  if (tokenResult.ok) {
+    initMap('map', tokenResult.token);
+  } else {
+    console.warn('[app] Mapbox トークン取得に失敗、地図初期化をスキップ', tokenResult);
+  }
+
+  // 地図に依存する陰影起伏図の初期レイヤ適用（initMap 後に実施）
+  if (hillshadeBtn) {
+    const hillshadeInitial = getHillshadeLevel();
+    applyHillshadeLayer(hillshadeInitial);
+    setHillshadeToggleState(hillshadeInitial);
+  }
+
+  setVisitedCount(getVisitedCount());
+
+  // 既存軌跡を復元（今日の ts のものだけ描画。過去日分は localStorage に温存）
+  const state = loadState();
+  const todayPoints = filterTodayPoints(state.track, Date.now());
+  if (todayPoints.length > 0) {
+    setTrack(todayPoints);
+    lastTrackTs = todayPoints[todayPoints.length - 1].ts;
+  }
+
+  // 既存の現在地情報を表示（キャッシュ済要約があれば）
+  if (currentMuniCd && state.visited[currentMuniCd]) {
+    const v = state.visited[currentMuniCd];
+    setMuniName(v.name);
+    const cached = getCachedDescription(currentMuniCd);
+    if (cached) {
+      setDescription(cached);
+      currentDescriptionText = cached;
+      currentJudgeData = { cached: true };
+      setDebugInfo(currentJudgeData, isDebugOn());
+      // Issue #17: 起動時のキャッシュ表示でも 👍 / 👎 を出す。
+      // この経路は sampling 判定前なので trace は無いが、クリック時に遅延記録される。
+      currentRating = null;
+      setRatingState(null);
+      showRating();
+    }
+  }
+
+  // GPS 監視開始
+  startWatching(
+    (pos) => handlePosition(pos, password),
+    (err) => handleGpsError(err),
+  );
+
   // バックグラウンドで前日以前の visited を DynamoDB に flush
   tryFlushConquests(password);
 }
@@ -351,7 +377,10 @@ async function handlePosition({ lat, lon, speed, altitude }, password) {
 
     // Issue #17: 新カードに切り替わったので 👍 / 👎 をリセットして一旦隠す。
     // 解説が確定した時点（キャッシュ/生成成功）で showRating() する。
+    // currentDescriptionText も一旦 null にし、有効な説明文が出るまで評価記録の
+    // 対象が無い状態にする（記事なし・生成失敗のまま rating が押せないように）。
     currentRating = null;
+    currentDescriptionText = null;
     setRatingState(null);
     hideRating();
 
@@ -359,6 +388,7 @@ async function handlePosition({ lat, lon, speed, altitude }, password) {
 
     if (cached) {
       setDescription(cached);
+      currentDescriptionText = cached;
       currentJudgeData = { cached: true };
       setDebugInfo(currentJudgeData, isDebugOn());
       if (currentTraceId) {
@@ -370,8 +400,10 @@ async function handlePosition({ lat, lon, speed, altitude }, password) {
         }));
         currentDisplayStartMs = Date.now();
         updateTelemetry(currentTraceId, { ts_displayed: currentDisplayStartMs });
-        showRating();  // Issue #17: 有効な解説が出たので 👍 / 👎 を表示
       }
+      // Issue #17: 有効な解説が出たので sampling の有無に関わらず 👍 / 👎 を表示する。
+      // サンプリング外でクリックされた場合は handleRatingClick が trace を遅延発行して記録する。
+      showRating();
     } else {
       setDescriptionLoading();
       const result = await fetchDescription(
@@ -415,6 +447,7 @@ async function handlePosition({ lat, lon, speed, altitude }, password) {
             await new Promise((r) => setTimeout(r, 300));
           }
           setDescription(result.description);
+          currentDescriptionText = result.description;
           currentJudgeData = {
             judge_passed: result.judge_passed,
             faithfulness_score: result.faithfulness_score,
@@ -446,8 +479,9 @@ async function handlePosition({ lat, lon, speed, altitude }, password) {
             }));
             currentDisplayStartMs = Date.now();
             updateTelemetry(currentTraceId, { ts_displayed: currentDisplayStartMs });
-            showRating();  // Issue #17: 有効な解説が出たので 👍 / 👎 を表示
           }
+          // Issue #17: 有効な解説が出たので sampling の有無に関わらず 👍 / 👎 を表示する。
+          showRating();
         }
       } else if (result.status === 401) {
         clearPassword();
@@ -474,12 +508,36 @@ function finalizeCurrentTelemetry() {
 }
 
 // === Issue #17: 👍 / 👎 クリック処理 ===
-// 表示中 entry の user_rating を更新する。trace_id が無い（サンプリング外）ときは無視。
-// 同じボタン再タップで null（取り消し）に戻す。updateTelemetry で localStorage に反映し、
-// flush は既存の自動経路（市町村切替・60 秒タイマー）に任せる。
+// 👍 / 👎 は明示フィードバックで貴重なので、サンプリングで間引かず常に記録する。
+// サンプリング外で trace_id が無いときは、その場で trace を遅延発行し、表示中の
+// 市町村に対するテレメトリエントリを積んでから user_rating を更新する。これにより
+// SAMPLE_RATE を下げても評価だけは必ず残る（受動シグナル dwell_ms 等のみ間引く）。
+// 同じボタン再タップで null（取り消し）に戻す。flush は既存の自動経路に任せる。
 function handleRatingClick(clicked) {
-  if (!currentTraceId) return;
-  currentRating = nextRating(currentRating, clicked);
+  const plan = planRatingClick({
+    hasTrace: !!currentTraceId,
+    hasDescription: !!currentDescriptionText && !!currentMuniCd,
+    currentRating,
+    clicked,
+  });
+  // 有効な説明文が表示されていなければ無視（ボタンは hidden のはずだが防御的に）。
+  if (!plan) return;
+
+  // サンプリング外で trace が無ければ、評価を確実に残すため遅延発行してエントリを積む。
+  if (plan.needNewTrace) {
+    currentTraceId = generateTraceId();
+    const now = Date.now();
+    appendTelemetry(buildTelemetryEntry({
+      trace_id: currentTraceId,
+      muni_code: currentMuniCd,
+      description: currentDescriptionText,
+      ts_generated: now,
+    }));
+    currentDisplayStartMs = now;
+    updateTelemetry(currentTraceId, { ts_displayed: now });
+  }
+
+  currentRating = plan.userRating;
   updateTelemetry(currentTraceId, { user_rating: currentRating });
   setRatingState(currentRating);
 }

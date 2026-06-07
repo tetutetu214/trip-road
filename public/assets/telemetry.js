@@ -107,3 +107,27 @@ export function shouldSample(sampleRate) {
   if (sampleRate <= 0.0) return false;
   return Math.random() < sampleRate;
 }
+
+/**
+ * Issue #17: 👍 / 👎 クリック時にやるべきことを決める純粋関数。
+ *
+ * 👍 / 👎 は明示フィードバックで貴重なため、サンプリングで間引かず常に記録する。
+ * そのためサンプリング外（trace_id 未発行）でクリックされたら、新しい trace を
+ * 発行してエントリを積む必要がある（needNewTrace=true）。有効な説明文が出ていない
+ * （記事なし・生成失敗・切替直後）ときは記録対象が無いので無視する。
+ *
+ * @param {object} args
+ * @param {boolean} args.hasTrace        - 現在 trace_id を保持しているか
+ * @param {boolean} args.hasDescription  - 有効な説明文が表示中か（muni_code と本文が揃っているか）
+ * @param {'up'|'down'|null} args.currentRating - 現在の user_rating
+ * @param {'up'|'down'} args.clicked      - 押されたボタン
+ * @returns {{ needNewTrace: boolean, userRating: ('up'|'down'|null) } | null}
+ *   無視する場合は null。記録する場合は trace 発行要否と次の user_rating を返す。
+ */
+export function planRatingClick({ hasTrace, hasDescription, currentRating, clicked }) {
+  if (!hasDescription) return null;
+  return {
+    needNewTrace: !hasTrace,
+    userRating: nextRating(currentRating, clicked),
+  };
+}
