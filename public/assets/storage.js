@@ -153,15 +153,22 @@ export function markVisitedSynced(muniCodes) {
 }
 
 // === Description cache（Plan I: 市町村ごと単一の要約） ===
+// プロンプトや生成仕様を変えたら DESCRIPTION_VERSION を上げる。版数が一致しない
+// 古いキャッシュは無効（null 扱い）にして、次の訪問時に新仕様で再生成させる。
+// visited レコード自体（名前・初訪問日・軌跡）は消さないので踏破履歴は保持される。
+const DESCRIPTION_VERSION = 2;
+
 export function getCachedDescription(code) {
   const v = loadState().visited[code];
   if (!v) return null;
+  if (v.descVersion !== DESCRIPTION_VERSION) return null; // 旧版キャッシュは再生成させる
   return v.description ?? null;
 }
 export function setCachedDescription(code, text) {
   const state = loadState();
   if (!state.visited[code]) return; // markVisited が先行する前提
   state.visited[code].description = text;
+  state.visited[code].descVersion = DESCRIPTION_VERSION;
   saveState(state);
 }
 

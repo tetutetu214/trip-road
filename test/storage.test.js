@@ -81,6 +81,28 @@ describe('description cache（Plan I: 市町村ごと単一の要約）', () => 
     setCachedDescription('99999', 'orphan');
     expect(getCachedDescription('99999')).toBeNull();
   });
+
+  it('旧版キャッシュ（descVersion なし）は無効化され null を返す（再生成させる）', () => {
+    // 旧スキーマ: description は残っているが descVersion を持たない
+    localStorage.setItem('trip-road-state', JSON.stringify({
+      password: null,
+      visited: { '14151': { name: '相模原市緑区', prefecture: '神奈川県', firstVisit: '2026-01-01T00:00:00.000Z', description: '旧プロンプトのたより' } },
+      track: [],
+      currentMuniCd: null,
+    }));
+    expect(getCachedDescription('14151')).toBeNull();
+  });
+
+  it('旧版キャッシュを無効化しても visited 記録（踏破履歴）は消えない', () => {
+    localStorage.setItem('trip-road-state', JSON.stringify({
+      password: null,
+      visited: { '14151': { name: '相模原市緑区', prefecture: '神奈川県', firstVisit: '2026-01-01T00:00:00.000Z', description: '旧プロンプトのたより' } },
+      track: [],
+      currentMuniCd: null,
+    }));
+    getCachedDescription('14151'); // 無効化（null 返し）が走っても…
+    expect(getVisitedCount()).toBe(1); // 踏破履歴は保持される
+  });
 });
 
 describe('track', () => {
