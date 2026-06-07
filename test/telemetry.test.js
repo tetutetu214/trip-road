@@ -3,6 +3,7 @@ import {
   generateTraceId,
   buildTelemetryEntry,
   shouldSample,
+  nextRating,
 } from '../public/assets/telemetry.js';
 
 describe('generateTraceId', () => {
@@ -117,6 +118,27 @@ describe('buildTelemetryEntry (Plan I)', () => {
     expect(entry.fallback_to_extract).toBe(true);
     expect(entry.regenerated).toBe(true);
     expect(entry.faithfulness_score).toBe(2);
+  });
+});
+
+describe('nextRating (Issue #17 トグル)', () => {
+  it('未評価のカードで 👍 を押すと up になる', () => {
+    expect(nextRating(null, 'up')).toBe('up');
+  });
+  it('未評価のカードで 👎 を押すと down になる', () => {
+    expect(nextRating(null, 'down')).toBe('down');
+  });
+  it('既に up のカードで同じ 👍 を押すと取り消されて null に戻る', () => {
+    expect(nextRating('up', 'up')).toBeNull();
+  });
+  it('既に down のカードで同じ 👎 を押すと取り消されて null に戻る', () => {
+    expect(nextRating('down', 'down')).toBeNull();
+  });
+  it('up のカードで 👎 を押すと down に切り替わる', () => {
+    expect(nextRating('up', 'down')).toBe('down');
+  });
+  it('down のカードで 👍 を押すと up に切り替わる', () => {
+    expect(nextRating('down', 'up')).toBe('up');
   });
 });
 

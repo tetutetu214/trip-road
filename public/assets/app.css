@@ -390,6 +390,34 @@ body {
 .hillshade-toggle.hillshade-weak { opacity: 0.7; }
 .hillshade-toggle.hillshade-strong { opacity: 1; }
 
+/* Issue #17: 👍 / 👎 明示フィードバックボタン。カード右下に控えめに置く */
+.tayori-rating {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 8px;
+}
+.rating-btn {
+  /* 押しやすい 48x48 のタップ領域を確保しつつ、絵文字自体は小さく見せる */
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  opacity: 0.4;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 150ms, background 150ms, transform 100ms;
+}
+.rating-btn:active { transform: scale(0.88); }
+.rating-btn.rating-active { opacity: 1; }
+#rating-up.rating-active { background: rgba(80, 200, 120, 0.18); }
+#rating-down.rating-active { background: rgba(230, 100, 100, 0.18); }
+
 /* Plan E (6.5b): デバッグオーバーレイ。description のすぐ下に出す */
 .debug-info {
   margin-top: 10px;

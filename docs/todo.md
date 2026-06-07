@@ -608,6 +608,21 @@ Issue #46 の opacity 0.3 は控えめという実機フィードバックを受
 - [ ] **陰影が見えない問題を修正**: Standard の不透明な地面の下（slot:'bottom'）に hillshade を敷いたため隠れている疑い。`setTerrain`（本物の3D地形、exaggeration を off/弱/強に割当）方式へ切替え、昼に検証
 - [ ] PR 作成・マージ（保留 or 先行は要相談）
 
+## Issue #17 👍/👎 明示フィードバックボタン（2026-06-07）
+
+「土地のたより」カードに 👍/👎 を追加し、表示中 entry の `user_rating` をテレメトリに記録（集計用途のみ、Few-shot 経路 #18 は不採用）。詳細は knowledge.md 7 章。
+
+- [x] index.html: カード右下に 👍/👎 ボタン（48×48 タップ領域、初期 hidden）
+- [x] app.css: `.tayori-rating` / `.rating-btn`（active で 👍 緑 / 👎 赤の薄背景）
+- [x] telemetry.js: `nextRating(current, clicked)` 純粋関数（同ボタン再タップで null）
+- [x] ui.js: `setRatingState` / `showRating` / `hideRating`
+- [x] app.js: クリックで `updateTelemetry(traceId, {user_rating})`、切替時リセット、解説確定時に表示
+- [x] Vitest: nextRating 6件 + setRatingState/show/hide 5件（全 140 件 pass）
+- [x] E2E: rating 表示・トグル・localStorage 記録の検証（本番反映後に流す）
+- [ ] PR 作成・マージ・本番反映
+- [ ] 本番反映後に E2E 実行（`source ~/.secrets/trip-road.env && npm run test:e2e`）→ スクショ確認
+- [ ] Athena で `user_rating` がクエリできることを確認（データ蓄積後）
+
 ### さらに先（無時系列、検討候補）
 
 - [ ] Service Worker によるオフライン対応

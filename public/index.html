@@ -82,6 +82,11 @@
         <div></div><div></div><div class="short"></div>
       </div>
       <div id="description-loading-text" class="tayori-loading-text hidden"></div>
+      <!-- Issue #17: 👍 / 👎 明示フィードバック。解説が出ているときだけ表示する -->
+      <div id="tayori-rating" class="tayori-rating hidden">
+        <button type="button" id="rating-up" class="rating-btn" aria-label="この解説はよかった" aria-pressed="false">👍</button>
+        <button type="button" id="rating-down" class="rating-btn" aria-label="この解説はいまいち" aria-pressed="false">👎</button>
+      </div>
       <pre id="debug-info" class="debug-info hidden"></pre>
     </div>
 

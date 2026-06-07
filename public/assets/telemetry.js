@@ -85,6 +85,18 @@ export function buildTelemetryEntry(args) {
 }
 
 /**
+ * Issue #17: 👍 / 👎 のトグル遷移を決める純粋関数。
+ * 同じボタンを再タップしたら null（取り消し）に戻し、別のボタンなら切り替える。
+ *
+ * @param {'up'|'down'|null} current - 現在の user_rating
+ * @param {'up'|'down'} clicked - 押されたボタン
+ * @returns {'up'|'down'|null} 次の user_rating
+ */
+export function nextRating(current, clicked) {
+  return current === clicked ? null : clicked;
+}
+
+/**
  * サンプリング判定。
  *
  * @param {number} sampleRate - 0.0 〜 1.0

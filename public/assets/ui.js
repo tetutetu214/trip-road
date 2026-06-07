@@ -47,6 +47,27 @@ export function setVisitedCount(n) {
   $('visited-count').textContent = String(n);
 }
 
+// === Issue #17: 👍 / 👎 明示フィードバック ===
+// ボタンの選択状態（'up' / 'down' / null）を DOM に反映する。
+export function setRatingState(rating) {
+  const up = $('rating-up');
+  const down = $('rating-down');
+  if (!up || !down) return;
+  up.classList.toggle('rating-active', rating === 'up');
+  up.setAttribute('aria-pressed', String(rating === 'up'));
+  down.classList.toggle('rating-active', rating === 'down');
+  down.setAttribute('aria-pressed', String(rating === 'down'));
+}
+// 有効な解説が表示されているときだけ rating 行を出す。
+export function showRating() {
+  const el = $('tayori-rating');
+  if (el) el.classList.remove('hidden');
+}
+export function hideRating() {
+  const el = $('tayori-rating');
+  if (el) el.classList.add('hidden');
+}
+
 export function setDescription(text) {
   const body = $('description');
   const skel = $('description-skeleton');
