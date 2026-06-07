@@ -631,8 +631,12 @@ Codex はモデルエラーで使用不可だったため Claude Code 単独で�
 - [x] **修正2 fix(map)**: フッターボタン（⚙️/⛰️/👍👎/🗺️）のリスナ装着を `await getMapboxToken()` より前へ。地図依存の hillshade 初期適用のみ initMap 後に残す。約375msの未配線ウィンドウを解消
 - [x] **修正3 test(e2e)**: main.spec test#5 に `muni-name` 確定待ち + rating timeout 10s、history.spec `enterHistoryScreen` に `waitForResponse('/api/mapbox-token')`
 - [x] Vitest 145件 pass（planRatingClick 5件追加）
-- [ ] フロント本番デプロイ（`deploy_frontend.sh`）→ 本番 E2E 再実行で rating/history 緑化を確認
+- [x] フロント本番デプロイ（`deploy_frontend.sh`、Deployment `1d3e1147`）→ 本番アセットに planRatingClick・配線前倒し反映を確認
+- [x] 本番 E2E 再実行（main+history × chromium 系2プロジェクト、16 passed / 2 failed）。**rating test#5 と history ナビゲーション系は緑化**を確認
 - [ ] PR 作成・マージ
+- 残2件はスコープ外の既存問題:
+  - `history.spec.js` diag（desktop-chromium のみ）: `touchscreen.tap` は hasTouch 必須で desktop 無効 → diag テストを touch 有効プロジェクト限定に skip すべき（テスト設定。iphone-emulated は PASS）
+  - `main.spec.js` test#4 visibilitychange 地図サイズ: Mapbox `map.resize()` 系の別件（要個別調査）
 
 ### E2E 実行で判明した課題（2026-06-07、要対応）
 

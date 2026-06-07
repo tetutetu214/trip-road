@@ -78,7 +78,12 @@ async function enterHistoryScreen(page) {
 }
 
 test.describe('踏破履歴ビュー E2E', () => {
-  test('diag: 関東タップ前後の内部状態と Canvas hit testing の検証', async ({ page }) => {
+  test('diag: 関東タップ前後の内部状態と Canvas hit testing の検証', async ({ page }, testInfo) => {
+    // この diag テストは page.touchscreen.tap() を使うため、touch 無効の
+    // desktop-chromium では実行できない（hasTouch must be enabled）。
+    // touch 有効プロジェクト（iphone-emulated 等）限定で走らせる。
+    test.skip(!testInfo.project.use.hasTouch, 'touchscreen.tap を使うため touch 有効プロジェクト限定');
+
     const consoleErrors = [];
     page.on('console', (msg) => {
       if (msg.type() === 'error') consoleErrors.push(msg.text());
