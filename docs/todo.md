@@ -668,3 +668,22 @@ VSCode 中断分の続きで本番 E2E（39件、chromium-iphone / desktop-chrom
 - [ ] 軌跡の localStorage トリム戦略
 - [ ] `download_n03.sh` の最終 `ls` を動的に（MLIT の zip 構造変更への備え）
 - [ ] `build_adjacency.py` の入力 0 件時の防御的 early return
+
+---
+
+## 技術負債の棚卸し（2026-06-10、Issue #75 / #76）
+
+調査・整理の経緯は `knowledge.md` 8 章を参照。
+
+### 負債1: フロントテスト戦略（Issue #75）
+
+- [ ] **Phase A**: api.js 単体テスト追加（fetch モック注入、リトライ/401/400/タイムアウト/タイマークリア経路）← 着手中
+- [ ] **Phase B**: app.js 状態遷移の責務分解（グローバル変数 9 個 → state オブジェクト + 純粋遷移関数、handlePosition() の 4 ステップ分割）
+- [ ] **Phase C**（任意・低優先）: map.js / history.js の状態管理だけ純粋オブジェクトに分離
+
+### 負債2: Workers credential 設計改善（Issue #76）
+
+- [ ] IAM 権限分離: Worker 用ユーザーから分析用読取・削除権限を外し書込系最小権限に（要 aws login）
+- [ ] fetch_entries.sh をローカル短期トークン実行に変更
+- [ ] キーローテーションのスクリプト化（新キー作成 → Secret 更新 → 検証 → 旧キー削除）
+- OIDC 化は見送り判断（根拠は Issue #76 / knowledge.md 8.2 章）
