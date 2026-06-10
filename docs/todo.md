@@ -677,7 +677,7 @@ VSCode 中断分の続きで本番 E2E（39件、chromium-iphone / desktop-chrom
 
 ### 負債1: フロントテスト戦略（Issue #75）
 
-- [ ] **Phase A**: api.js 単体テスト追加（fetch モック注入、リトライ/401/400/タイムアウト/タイマークリア経路）← 着手中
+- [x] **Phase A**: api.js 単体テスト追加（2026-06-10 完了、`test/api.test.js` 27件、全 vitest 172件 pass。実装中に見つけた api.js の潜在課題3点は knowledge.md 8.3 章）
 - [ ] **Phase B**: app.js 状態遷移の責務分解（グローバル変数 9 個 → state オブジェクト + 純粋遷移関数、handlePosition() の 4 ステップ分割）
 - [ ] **Phase C**（任意・低優先）: map.js / history.js の状態管理だけ純粋オブジェクトに分離
 
