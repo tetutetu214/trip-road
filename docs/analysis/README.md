@@ -80,9 +80,9 @@ claude.ai or Anthropic API に渡す。プロンプトは 3 種：
 - 当初は Athena で SQL 集計する設計だったが、月 100 件規模の個人 PoC では
   LLM 単独分析の方が学習効果も実装コストも有利なので方針変更（詳細は
   `docs/knowledge.md` 4.7 セクション）
-- IAM ユーザ `trip-road-telemetry-writer` は当初 `s3:PutObject` のみだったが、
-  `s3:ListBucket` / `s3:GetObject` / `s3:DeleteObject` を追加して analysis
-  にも使えるようにした
+- Worker 用 IAM ユーザは `s3:PutObject` のみ（Issue #76 で権限分離、2026-06-10）。
+  analysis の読み取りは Worker のキーではなく、ローカルの `aws login`
+  短期トークンで行う（`fetch_entries.sh` が認証チェックする）
 - `data/` 配下の JSONL は個人の移動ログそのものなのでコミットしない
   （`.gitignore` で除外済）
 

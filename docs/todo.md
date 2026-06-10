@@ -683,7 +683,7 @@ VSCode 中断分の続きで本番 E2E（39件、chromium-iphone / desktop-chrom
 
 ### 負債2: Workers credential 設計改善（Issue #76）
 
-- [ ] IAM 権限分離: Worker 用ユーザーから分析用読取・削除権限を外し書込系最小権限に（要 aws login）
-- [ ] fetch_entries.sh をローカル短期トークン実行に変更
-- [ ] キーローテーションのスクリプト化（新キー作成 → Secret 更新 → 検証 → 旧キー削除）
-- OIDC 化は見送り判断（根拠は Issue #76 / knowledge.md 8.2 章）
+- [x] IAM 権限分離（2026-06-10 完了）: TripRoadTelemetryWritePolicy を s3:PutObject 専用に縮小、simulate-principal-policy で Get/Delete/List の implicitDeny を確認
+- [x] fetch_entries.sh をローカル短期トークン実行に変更（2026-06-10 完了、209 件集約の実走確認済）
+- [x] キーローテーションのスクリプト化 + 初回実走（2026-06-10 完了、`workers/rotate_aws_key.sh`。2026-04-25 作成の旧キーを新キーに交換、本番 200 検証 2 回 + 旧キー削除まで自動）
+- OIDC 化は見送り判断（根拠は Issue #76 / knowledge.md 8.2 章）→ **Issue #76 クローズ**

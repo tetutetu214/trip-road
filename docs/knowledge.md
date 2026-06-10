@@ -2153,3 +2153,13 @@ VSCode アップデートで中断した #71（nova.js プロンプト改善）�
 1. **200 + JSON parse 失敗が未ハンドル**: `fetchDescription` の `res.ok` 分岐内の `await res.json()` に `.catch()` がなく、200 で本文が壊れていると例外が catch に落ちて `status:0` のリトライ対象になる。400 経路は `.catch(() => ({}))` で守られており非対称
 2. **empty_description の status が 200 のまま返る**: 空 description で全リトライ失敗時、`{ok:false, status:200, error:'empty_description'}` となり、呼び出し側が status で異常判定すると紛らわしい
 3. **phase タイマーはリトライ全体で1度だけ**: judging/regenerating は最初の試行開始からの経過秒で発火し、リトライで長引いても追加通知はない（仕様としては妥当だが意図の明文化なし）
+
+### 8.4 Issue #76 短期対策の実施記録（2026-06-10 完了）
+
+実施順と確認方法。シークレット値は一切画面に出さない運用（キーIDは末尾4文字のみ表示）で実施した。
+
+1. **IAM 権限分離**: `TripRoadTelemetryWritePolicy` から分析用 statement（s3:ListBucket / GetObject / DeleteObject）を削除し s3:PutObject 専用に。`aws iam simulate-principal-policy` で「PutObject=allowed、他3つ=implicitDeny」を確認。Worker のキーが漏れてもテレメトリの読み取り・削除は不可能になった
+2. **fetch_entries.sh の認証経路変更**: env ファイルの丸ごと source をやめ、AWS_REGION / S3_TELEMETRY_BUCKET の 2 変数だけ grep 抽出。S3 読み取りはローカルの aws login 短期トークンで行い、未認証なら即エラーで止まる。209 件の集約まで実走確認
+3. **キーローテーション**: `workers/rotate_aws_key.sh` 新設・初回実走成功。安全順序は「新キー作成 → Workers Secrets 更新 → 本番 curl 検証（/api/describe=Bedrock 経路 + /api/conquests=DynamoDB 経路）→ 旧キー無効化（可逆）→ 再検証 → 削除（不可逆）」。検証が通るまで不可逆操作をしないのが要点。IAM ユーザー名はリポジトリにベタ書きせず ~/.secrets/trip-road.env の IAM_USER_NAME から読む
+
+教訓: 「アクセスキー直持ち」と聞くとコード直書きを想像するが、実態調査の結果ベタ書きはなく、本当の問題は (1) 長期キーであること (2) 1 キーへの権限同居 (3) ローテーション未整備だった。負債は推測でなく実態を測ってから対策を選ぶ。

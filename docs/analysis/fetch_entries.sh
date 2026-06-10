@@ -15,15 +15,26 @@
 
 set -euo pipefail
 
-# シークレット読込（writer認証で読み取り可能。IAMポリシーに s3:ListBucket / s3:GetObject 付与済み）
+# 設定読込（Issue #76: Worker 用の長期キーは使わない。region とバケット名だけ抽出し、
+# S3 の読み取りはローカルの aws login 短期トークンで行う）
 SECRETS_PATH="${HOME}/.secrets/trip-road.env"
 if [ ! -f "$SECRETS_PATH" ]; then
   echo "エラー: $SECRETS_PATH が見つかりません" >&2
   exit 1
 fi
-set -a
-source "$SECRETS_PATH"
-set +a
+AWS_REGION=$(grep -E '^AWS_REGION=' "$SECRETS_PATH" | head -1 | cut -d= -f2-)
+S3_TELEMETRY_BUCKET=$(grep -E '^S3_TELEMETRY_BUCKET=' "$SECRETS_PATH" | head -1 | cut -d= -f2-)
+if [ -z "$AWS_REGION" ] || [ -z "$S3_TELEMETRY_BUCKET" ]; then
+  echo "エラー: $SECRETS_PATH に AWS_REGION / S3_TELEMETRY_BUCKET がありません" >&2
+  exit 1
+fi
+
+# 認証チェック: Worker 用 IAM ユーザーは PutObject 専用になったため（Issue #76）、
+# このスクリプトは aws login 済みのセッションでしか動かない
+if ! aws sts get-caller-identity >/dev/null 2>&1; then
+  echo "エラー: AWS 認証がありません。先に aws login を実行してください" >&2
+  exit 1
+fi
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "エラー: jq が必要です（apt install jq）" >&2
