@@ -1,5 +1,10 @@
 # trip-road タスク一覧
 
+## 次の一手 <!-- next-move: 2026-07-12 -->
+- Issue #73（E2E 2件失敗、visibilitychange の地図サイズ）の根因解析
+- 古い feature ブランチ3本の中身確認後に削除
+- docs ドリフト解消
+
 **最終更新**: 2026-05-12（Plan I「Wikipedia 要約特化」を 1 日で実装・本番反映。タスク自体を「未知の創作」から「既知の圧縮」へ転換、二十四節気と Judge 4 軸を廃止、Faithfulness 1 軸へ簡素化、`out_of_kb_terms`（抜粋外固有名詞混入）が 10 件中 0 件に。Plan I 詳細は `docs/plans/2026-05-11-plan-i-wikipedia-summary-pivot.md`、知見は `knowledge.md` 4.24 章）
 
 ---
