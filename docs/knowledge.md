@@ -2163,3 +2163,9 @@ VSCode アップデートで中断した #71（nova.js プロンプト改善）�
 3. **キーローテーション**: `workers/rotate_aws_key.sh` 新設・初回実走成功。安全順序は「新キー作成 → Workers Secrets 更新 → 本番 curl 検証（/api/describe=Bedrock 経路 + /api/conquests=DynamoDB 経路）→ 旧キー無効化（可逆）→ 再検証 → 削除（不可逆）」。検証が通るまで不可逆操作をしないのが要点。IAM ユーザー名はリポジトリにベタ書きせず ~/.secrets/trip-road.env の IAM_USER_NAME から読む
 
 教訓: 「アクセスキー直持ち」と聞くとコード直書きを想像するが、実態調査の結果ベタ書きはなく、本当の問題は (1) 長期キーであること (2) 1 キーへの権限同居 (3) ローテーション未整備だった。負債は推測でなく実態を測ってから対策を選ぶ。
+
+## 2026-07-18: Issue #73 根因確定（テスト側の待機不足）と APP_PASSWORD ローテーション
+
+- **#73 の根因**: test#4 が説明文生成パイプラインの完了を待たず固定 2000ms で地図高さを計測していたこと。`.bottom-card` の高さ変化が ResizeObserver → `--card-height` → `#map` 高さに連動する設計のため、生成フェーズ遷移中に計測すると visibilitychange と無関係に差分（実測 98px）が出る。Mapbox v3 の resize バグではない。修正は test#5 と同じ待機パターンの追加のみ（PR #78、repeat-each=3 retries=0 で 3/3 pass）。
+- **教訓**: 「地図サイズが変わる」系の E2E は、地図サイズに影響する**すべての非同期要因**（このアプリではカード高さ＝LLM 生成の進行状態）を固定してから計測する。固定待機（waitForTimeout）は LLM 呼び出しを挟む UI では必ず flaky になる。
+- **APP_PASSWORD 露出事故**: E2E 調査のサブエージェントが bash 変数展開の誤用で実値をセッションログに露出 → 即日ローテーション（wrangler secret put、Worker version 21d382aa で適用確認、新値で E2E ログイン成功）。env ファイルは末尾追記方式（source 後勝ち）で更新、旧行の手動削除はてつてつ待ち。

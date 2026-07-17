@@ -1,9 +1,10 @@
 # trip-road タスク一覧
 
-## 次の一手 <!-- next-move: 2026-07-12 -->
-- Issue #73（E2E 2件失敗、visibilitychange の地図サイズ）の根因解析
-- 古い feature ブランチ3本の中身確認後に削除
-- docs ドリフト解消
+## 次の一手 <!-- next-move: 2026-07-18 -->
+- ⏳てつてつ: PR #78 のレビュー → マージ（Issue #73 根因確定済み: テスト側の待機不足。audit-20260718 所見1）
+- ⏳てつてつ: ~/.secrets/trip-road.env の旧 APP_PASSWORD 行を削除（07-18 に露出事故→ローテ済み、新値は末尾行。audit-20260718 所見2）
+- diff 0 の古い feature ブランチ3本の削除実行 + origin-only 3本の突合
+- docs ドリフト解消（wrangler.toml 旧コメント・todo.md チェック漏れ）
 
 **最終更新**: 2026-05-12（Plan I「Wikipedia 要約特化」を 1 日で実装・本番反映。タスク自体を「未知の創作」から「既知の圧縮」へ転換、二十四節気と Judge 4 軸を廃止、Faithfulness 1 軸へ簡素化、`out_of_kb_terms`（抜粋外固有名詞混入）が 10 件中 0 件に。Plan I 詳細は `docs/plans/2026-05-11-plan-i-wikipedia-summary-pivot.md`、知見は `knowledge.md` 4.24 章）
 
