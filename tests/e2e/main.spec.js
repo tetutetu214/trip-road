@@ -114,7 +114,15 @@ test.describe('trip-road メイン画面 E2E', () => {
     await page.locator('#password-input').fill(APP_PASSWORD);
     await page.locator('#password-submit').click();
     await expect(page.locator('#main-screen')).toBeVisible();
-    await page.waitForTimeout(2000);  // 地図初期描画
+
+    // 土地のたより生成パイプラインの完了を待つ（Issue #73）。
+    // .bottom-card の高さは skeleton→生成中→判定中→確定 の遷移で変わり、
+    // ResizeObserver が --card-height 経由で #map の高さも動かすため、
+    // 遷移中に before/after を計測すると visibilitychange と無関係に高さ差が出る。
+    // skeleton は GPS 確定前も hidden のため、先に muni-name 確定を待つ（test#5 と同じ順序）。
+    await expect(page.locator('#muni-name')).not.toHaveText('現在地を取得中...', { timeout: 30000 });
+    await expect(page.locator('#description-skeleton')).toBeHidden({ timeout: 30000 });
+    await page.waitForTimeout(500);  // カード高さ確定後の ResizeObserver → map.resize 反映待ち
 
     // 地図サイズ取得（before）
     const mapBefore = await page.locator('#map').boundingBox();
@@ -129,7 +137,7 @@ test.describe('trip-road メイン画面 E2E', () => {
       document.dispatchEvent(new Event('visibilitychange'));
     });
 
-    await page.waitForTimeout(500);  // map.invalidateSize の setTimeout 100ms 待ち
+    await page.waitForTimeout(500);  // map.resize の setTimeout 100ms 待ち（Mapbox GL JS v3）
 
     // 地図サイズが大きく変わっていないこと
     const mapAfter = await page.locator('#map').boundingBox();
